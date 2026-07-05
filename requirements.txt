@@ -1,3 +1,4 @@
+akshare
 streamlit
 pandas
 numpy
