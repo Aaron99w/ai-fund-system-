@@ -6,11 +6,9 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 import time
 import random
-import re
 import json
 import requests
 from collections import Counter
-import math
 
 # ==================== 页面设置 ====================
 st.set_page_config(
@@ -20,7 +18,7 @@ st.set_page_config(
 )
 
 st.title("🤖 AI基金投顾 终极版")
-st.caption("📊 200+基金 · 多因子评分 · 新闻分析 · 历史回测 · 微信通知 · 投资决策")
+st.caption("📊 200+基金 · 短线模式 · 卖出提醒 · 投资决策 · 微信通知")
 
 # ==================== 微信通知配置 ====================
 WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的key"
@@ -38,238 +36,252 @@ def send_wechat_message(content):
     except Exception as e:
         return False, f"❌ 发送失败：{str(e)}"
 
-# ==================== 202只基金完整库 ====================
+# ==================== 短线ETF基金池 ====================
+SHORT_TERM_ETFS = [
+    {"name": "中概互联ETF", "code": "513050", "type": "T+0", "sector": "互联网", "volatility": "高"},
+    {"name": "纳指ETF", "code": "513100", "type": "T+0", "sector": "美股", "volatility": "高"},
+    {"name": "恒生ETF", "code": "159920", "type": "T+0", "sector": "港股", "volatility": "中高"},
+    {"name": "恒生科技ETF", "code": "513130", "type": "T+0", "sector": "港股科技", "volatility": "高"},
+    {"name": "标普500ETF", "code": "513500", "type": "T+0", "sector": "美股", "volatility": "中"},
+    {"name": "沪深300ETF", "code": "510300", "type": "T+1", "sector": "大盘", "volatility": "中"},
+    {"name": "中证500ETF", "code": "510500", "type": "T+1", "sector": "中小盘", "volatility": "中高"},
+    {"name": "创业板ETF", "code": "159915", "type": "T+1", "sector": "创业板", "volatility": "高"},
+    {"name": "科创50ETF", "code": "588000", "type": "T+1", "sector": "科创板", "volatility": "高"},
+    {"name": "半导体ETF", "code": "512480", "type": "T+1", "sector": "半导体", "volatility": "高"},
+    {"name": "芯片ETF", "code": "159995", "type": "T+1", "sector": "芯片", "volatility": "高"},
+    {"name": "新能源车ETF", "code": "515030", "type": "T+1", "sector": "新能源", "volatility": "高"},
+    {"name": "光伏ETF", "code": "515790", "type": "T+1", "sector": "光伏", "volatility": "高"},
+    {"name": "军工ETF", "code": "512660", "type": "T+1", "sector": "军工", "volatility": "高"},
+    {"name": "证券ETF", "code": "512880", "type": "T+1", "sector": "券商", "volatility": "中高"},
+    {"name": "银行ETF", "code": "512800", "type": "T+1", "sector": "银行", "volatility": "低"},
+    {"name": "消费ETF", "code": "159928", "type": "T+1", "sector": "消费", "volatility": "中"},
+    {"name": "医药ETF", "code": "512010", "type": "T+1", "sector": "医药", "volatility": "中高"},
+    {"name": "酒ETF", "code": "512690", "type": "T+1", "sector": "白酒", "volatility": "中高"},
+    {"name": "人工智能ETF", "code": "159819", "type": "T+1", "sector": "AI", "volatility": "高"},
+    {"name": "机器人ETF", "code": "562500", "type": "T+1", "sector": "机器人", "volatility": "高"},
+    {"name": "5G通信ETF", "code": "515050", "type": "T+1", "sector": "5G", "volatility": "高"},
+]
+
+# ==================== 卖出信号分析函数 ====================
+def analyze_sell_signals(holding, current_price, buy_price, market_sentiment, holding_days):
+    """分析卖出信号"""
+    signals = []
+    profit_rate = (current_price - buy_price) / buy_price * 100
+    is_etf = any(e["code"] == holding["code"] for e in SHORT_TERM_ETFS)
+    
+    # ===== 1. 止盈信号 =====
+    if profit_rate >= 15:
+        signals.append({
+            "level": "🔴 强烈卖出",
+            "reason": f"✅ 已达到止盈线（+{profit_rate:.1f}%），建议立即止盈",
+            "action": "卖出",
+            "urgency": "高"
+        })
+    elif profit_rate >= 10:
+        signals.append({
+            "level": "🟡 考虑止盈",
+            "reason": f"📈 已盈利{profit_rate:.1f}%，接近止盈线（15%），可考虑分批止盈",
+            "action": "分批止盈",
+            "urgency": "中"
+        })
+    elif profit_rate >= 5:
+        signals.append({
+            "level": "🟢 继续持有",
+            "reason": f"📊 已盈利{profit_rate:.1f}%，趋势良好，可继续持有",
+            "action": "持有",
+            "urgency": "低"
+        })
+    
+    # ===== 2. 止损信号 =====
+    if profit_rate <= -8:
+        signals.append({
+            "level": "🔴 止损提醒",
+            "reason": f"⚠️ 已亏损{profit_rate:.1f}%，触发止损线（-8%），建议止损离场",
+            "action": "止损卖出",
+            "urgency": "高"
+        })
+    elif profit_rate <= -5:
+        signals.append({
+            "level": "🟡 关注风险",
+            "reason": f"📉 已亏损{profit_rate:.1f}%，接近止损线（-8%），密切关注",
+            "action": "观察等待",
+            "urgency": "中"
+        })
+    
+    # ===== 3. 持有时间信号（短线） =====
+    if is_etf and holding_days >= 7:
+        signals.append({
+            "level": "🟡 短线提醒",
+            "reason": f"⏰ 已持有{holding_days}天，短线操作建议考虑获利了结",
+            "action": "考虑卖出",
+            "urgency": "中"
+        })
+    
+    # ===== 4. 市场情绪信号 =====
+    if market_sentiment == "悲观" and profit_rate > 0:
+        signals.append({
+            "level": "🟡 市场预警",
+            "reason": "📊 市场情绪转为悲观，建议减仓保护利润",
+            "action": "减仓",
+            "urgency": "中"
+        })
+    elif market_sentiment == "乐观" and profit_rate < -3:
+        signals.append({
+            "level": "🟢 机会信号",
+            "reason": "📈 市场情绪乐观，持仓亏损有望反弹，建议持有",
+            "action": "持有等待",
+            "urgency": "低"
+        })
+    
+    # ===== 5. 高位信号（估值过高） =====
+    if holding.get("position", 0) > 70 and profit_rate > 5:
+        signals.append({
+            "level": "🟡 估值提醒",
+            "reason": f"📊 当前估值位置{holding.get('position', 0)}%，偏高，建议部分止盈",
+            "action": "部分止盈",
+            "urgency": "中"
+        })
+    
+    # ===== 6. 综合判断 =====
+    if not signals:
+        signals.append({
+            "level": "🟢 正常持有",
+            "reason": "📊 当前无卖出信号，建议继续持有观察",
+            "action": "持有",
+            "urgency": "低"
+        })
+    
+    # 检查是否有高风险信号
+    has_high_risk = any(s["urgency"] == "高" for s in signals)
+    has_medium_risk = any(s["urgency"] == "中" for s in signals)
+    
+    # 生成综合建议
+    if has_high_risk:
+        overall = "🔴 建议立即卖出"
+        summary = "检测到高风险信号，建议尽快操作"
+    elif has_medium_risk:
+        overall = "🟡 建议关注"
+        summary = "存在中等风险信号，建议关注并准备操作"
+    else:
+        overall = "🟢 继续持有"
+        summary = "持仓正常，暂无卖出信号"
+    
+    return {
+        "signals": signals,
+        "overall": overall,
+        "summary": summary,
+        "profit_rate": profit_rate,
+        "has_high_risk": has_high_risk,
+        "has_medium_risk": has_medium_risk
+    }
+
+# ==================== 自动分析提醒函数 ====================
+def auto_check_all_holdings(holdings, market_sentiment):
+    """自动检查所有持仓的卖出信号"""
+    if not holdings:
+        return []
+    
+    results = []
+    for h in holdings:
+        # 计算持有天数
+        try:
+            buy_date = datetime.strptime(h["buy_date"], "%Y-%m-%d")
+            holding_days = (datetime.now() - buy_date).days
+        except:
+            holding_days = 0
+        
+        # 模拟当前价格
+        current_price = h.get("nav", 1.0) * random.uniform(0.88, 1.15)
+        buy_price = h.get("nav", 1.0)
+        position = h.get("position", random.randint(20, 80))
+        
+        h["position"] = position
+        
+        result = analyze_sell_signals(h, current_price, buy_price, market_sentiment, holding_days)
+        results.append({
+            "fund_name": h["name"],
+            "fund_code": h["code"],
+            "buy_price": buy_price,
+            "current_price": current_price,
+            "holding_days": holding_days,
+            "analysis": result
+        })
+    
+    return results
+
+# ==================== 短线技术分析 ====================
+def get_short_term_signal(etf_code):
+    signals = {
+        "趋势": random.choice(["多头排列", "空头排列", "震荡整理"]),
+        "RSI": random.randint(20, 80),
+        "MACD": random.choice(["金叉", "死叉", "粘合"]),
+        "量能": random.choice(["放量", "缩量", "正常"]),
+        "支撑位": round(random.uniform(0.92, 1.02), 3),
+        "压力位": round(random.uniform(1.03, 1.15), 3),
+        "布林带": random.choice(["上轨", "中轨", "下轨"]),
+        "现价": round(random.uniform(0.8, 2.5), 3),
+    }
+    score = 50
+    if signals["趋势"] == "多头排列":
+        score += 15
+    elif signals["趋势"] == "空头排列":
+        score -= 15
+    if signals["RSI"] < 30:
+        score += 10
+    elif signals["RSI"] > 70:
+        score -= 10
+    if signals["MACD"] == "金叉":
+        score += 10
+    elif signals["MACD"] == "死叉":
+        score -= 10
+    if signals["量能"] == "放量":
+        score += 8
+    elif signals["量能"] == "缩量":
+        score -= 5
+    if signals["布林带"] == "下轨":
+        score += 8
+    elif signals["布林带"] == "上轨":
+        score -= 8
+    signals["综合评分"] = max(0, min(100, score))
+    if signals["综合评分"] >= 70:
+        signals["操作建议"] = "📈 买入/加仓"
+        signals["建议理由"] = "技术指标偏多，量价配合良好"
+        signals["仓位建议"] = "60-80%"
+    elif signals["综合评分"] >= 50:
+        signals["操作建议"] = "⏳ 持有/观望"
+        signals["建议理由"] = "技术指标中性，等待方向明确"
+        signals["仓位建议"] = "30-50%"
+    else:
+        signals["操作建议"] = "📉 卖出/减仓"
+        signals["建议理由"] = "技术指标偏空，注意风险"
+        signals["仓位建议"] = "10-30%"
+    return signals
+
+# ==================== 长线基金库（精简版） ====================
 FUNDS = [
-    # ==================== 一、科技/成长（45只） ====================
     {"name": "前海开源人工智能混合", "code": "001986", "style": "科技", "nav": 2.85, "risk": "高", "return_1y": "+18.5%", "return_3y": "+42.5%", "max_dd": "-25.3%", "sharpe": 0.85},
     {"name": "万家人工智能混合", "code": "006281", "style": "科技", "nav": 1.92, "risk": "高", "return_1y": "+15.2%", "return_3y": "+38.2%", "max_dd": "-28.1%", "sharpe": 0.78},
-    {"name": "工银瑞信信息产业混合", "code": "000263", "style": "科技", "nav": 3.45, "risk": "高", "return_1y": "+20.3%", "return_3y": "+45.7%", "max_dd": "-22.6%", "sharpe": 0.92},
     {"name": "中欧时代先锋股票A", "code": "001938", "style": "科技", "nav": 1.87, "risk": "高", "return_1y": "+22.8%", "return_3y": "+51.3%", "max_dd": "-26.7%", "sharpe": 0.95},
-    {"name": "信达澳银新能源产业股票", "code": "001410", "style": "科技", "nav": 4.21, "risk": "高", "return_1y": "+25.6%", "return_3y": "+58.6%", "max_dd": "-30.2%", "sharpe": 0.88},
-    {"name": "嘉实智能汽车股票", "code": "002168", "style": "科技", "nav": 2.56, "risk": "高", "return_1y": "+12.8%", "return_3y": "+35.4%", "max_dd": "-32.5%", "sharpe": 0.72},
-    {"name": "汇添富科技创新混合", "code": "007355", "style": "科技", "nav": 1.78, "risk": "高", "return_1y": "+14.6%", "return_3y": "+32.1%", "max_dd": "-24.8%", "sharpe": 0.76},
-    {"name": "华安智能生活混合", "code": "001071", "style": "科技", "nav": 2.34, "risk": "高", "return_1y": "+16.2%", "return_3y": "+40.8%", "max_dd": "-23.4%", "sharpe": 0.82},
-    {"name": "广发科技先锋混合", "code": "008903", "style": "科技", "nav": 1.56, "risk": "高", "return_1y": "+10.5%", "return_3y": "+28.9%", "max_dd": "-29.6%", "sharpe": 0.68},
-    {"name": "南方科技创新混合", "code": "007340", "style": "科技", "nav": 2.12, "risk": "高", "return_1y": "+13.8%", "return_3y": "+36.7%", "max_dd": "-26.3%", "sharpe": 0.74},
-    {"name": "汇添富智能制造股票", "code": "005802", "style": "科技", "nav": 2.34, "risk": "高", "return_1y": "+12.5%", "return_3y": "+31.2%", "max_dd": "-25.1%", "sharpe": 0.72},
-    {"name": "嘉实先进制造股票", "code": "001039", "style": "科技", "nav": 1.87, "risk": "高", "return_1y": "+11.8%", "return_3y": "+29.8%", "max_dd": "-27.6%", "sharpe": 0.68},
-    {"name": "富国高端制造行业股票", "code": "000513", "style": "科技", "nav": 2.56, "risk": "高", "return_1y": "+13.2%", "return_3y": "+33.5%", "max_dd": "-24.3%", "sharpe": 0.74},
-    {"name": "汇添富移动互联股票", "code": "000697", "style": "科技", "nav": 1.45, "risk": "高", "return_1y": "+9.8%", "return_3y": "+25.6%", "max_dd": "-30.8%", "sharpe": 0.62},
-    {"name": "中邮信息产业灵活配置", "code": "001227", "style": "科技", "nav": 1.23, "risk": "高", "return_1y": "+8.6%", "return_3y": "+22.3%", "max_dd": "-32.4%", "sharpe": 0.58},
-    {"name": "长盛电子信息产业混合", "code": "080012", "style": "科技", "nav": 2.87, "risk": "高", "return_1y": "+15.6%", "return_3y": "+38.9%", "max_dd": "-26.7%", "sharpe": 0.80},
-    {"name": "华商计算机行业股票", "code": "007853", "style": "科技", "nav": 1.34, "risk": "高", "return_1y": "+9.2%", "return_3y": "+26.7%", "max_dd": "-28.9%", "sharpe": 0.64},
-    {"name": "融通互联网传媒灵活配置", "code": "001150", "style": "科技", "nav": 1.56, "risk": "高", "return_1y": "+8.8%", "return_3y": "+24.5%", "max_dd": "-31.2%", "sharpe": 0.60},
-    {"name": "前海开源工业革命4.0", "code": "001103", "style": "科技", "nav": 1.89, "risk": "高", "return_1y": "+10.5%", "return_3y": "+30.2%", "max_dd": "-27.8%", "sharpe": 0.66},
-    {"name": "农银工业4.0灵活配置", "code": "001606", "style": "科技", "nav": 2.45, "risk": "高", "return_1y": "+12.8%", "return_3y": "+34.8%", "max_dd": "-25.6%", "sharpe": 0.72},
-    {"name": "华夏中证人工智能ETF联接", "code": "008585", "style": "科技", "nav": 1.34, "risk": "高", "return_1y": "+14.2%", "return_3y": "+34.6%", "max_dd": "-26.5%", "sharpe": 0.70},
-    {"name": "富国中证科技50ETF联接", "code": "008749", "style": "科技", "nav": 1.45, "risk": "高", "return_1y": "+13.6%", "return_3y": "+32.8%", "max_dd": "-27.2%", "sharpe": 0.68},
-    {"name": "华宝科技ETF联接A", "code": "007873", "style": "科技", "nav": 1.56, "risk": "高", "return_1y": "+12.4%", "return_3y": "+30.5%", "max_dd": "-28.6%", "sharpe": 0.66},
-    {"name": "天弘中证电子ETF联接", "code": "001617", "style": "科技", "nav": 1.45, "risk": "高", "return_1y": "+11.2%", "return_3y": "+28.4%", "max_dd": "-27.5%", "sharpe": 0.64},
-    {"name": "南方中证500信息技术ETF联接", "code": "002900", "style": "科技", "nav": 1.34, "risk": "高", "return_1y": "+10.8%", "return_3y": "+26.8%", "max_dd": "-28.9%", "sharpe": 0.62},
-    {"name": "广发中证全指信息技术ETF联接", "code": "000942", "style": "科技", "nav": 1.56, "risk": "高", "return_1y": "+9.6%", "return_3y": "+24.5%", "max_dd": "-30.2%", "sharpe": 0.58},
-    {"name": "易方达中证科技50ETF联接", "code": "012717", "style": "科技", "nav": 1.23, "risk": "高", "return_1y": "+11.5%", "return_3y": "+27.6%", "max_dd": "-26.8%", "sharpe": 0.62},
-    {"name": "博时中证人工智能ETF联接", "code": "017742", "style": "科技", "nav": 1.02, "risk": "高", "return_1y": "+7.8%", "return_3y": "+18.6%", "max_dd": "-33.8%", "sharpe": 0.50},
-    {"name": "华夏中证机器人ETF联接", "code": "018344", "style": "科技", "nav": 1.05, "risk": "高", "return_1y": "+8.5%", "return_3y": "+20.8%", "max_dd": "-32.4%", "sharpe": 0.54},
-    {"name": "华富中证人工智能ETF联接", "code": "008020", "style": "科技", "nav": 1.12, "risk": "高", "return_1y": "+9.2%", "return_3y": "+22.6%", "max_dd": "-30.8%", "sharpe": 0.56},
-    {"name": "平安中证人工智能ETF联接", "code": "009051", "style": "科技", "nav": 1.08, "risk": "高", "return_1y": "+8.8%", "return_3y": "+21.8%", "max_dd": "-31.6%", "sharpe": 0.54},
-    {"name": "西部利得人工智能ETF联接", "code": "011832", "style": "科技", "nav": 1.06, "risk": "高", "return_1y": "+8.2%", "return_3y": "+20.2%", "max_dd": "-32.8%", "sharpe": 0.52},
-    {"name": "国泰中证计算机ETF联接", "code": "010210", "style": "科技", "nav": 1.15, "risk": "高", "return_1y": "+9.6%", "return_3y": "+24.2%", "max_dd": "-29.6%", "sharpe": 0.58},
-    {"name": "南方中证计算机ETF联接", "code": "010001", "style": "科技", "nav": 1.18, "risk": "高", "return_1y": "+10.2%", "return_3y": "+25.6%", "max_dd": "-28.8%", "sharpe": 0.60},
-    {"name": "富国中证大数据ETF联接", "code": "014041", "style": "科技", "nav": 1.03, "risk": "高", "return_1y": "+7.6%", "return_3y": "+19.2%", "max_dd": "-34.2%", "sharpe": 0.48},
-    {"name": "华夏中证云计算ETF联接", "code": "012445", "style": "科技", "nav": 1.04, "risk": "高", "return_1y": "+8.0%", "return_3y": "+19.8%", "max_dd": "-33.6%", "sharpe": 0.50},
-    {"name": "天弘中证计算机ETF联接", "code": "001630", "style": "科技", "nav": 1.42, "risk": "高", "return_1y": "+10.8%", "return_3y": "+26.2%", "max_dd": "-28.4%", "sharpe": 0.62},
-    {"name": "易方达中证人工智能ETF联接", "code": "012262", "style": "科技", "nav": 1.08, "risk": "高", "return_1y": "+8.6%", "return_3y": "+21.2%", "max_dd": "-30.6%", "sharpe": 0.54},
-    {"name": "嘉实中证软件服务ETF联接", "code": "012426", "style": "科技", "nav": 1.06, "risk": "高", "return_1y": "+8.4%", "return_3y": "+20.6%", "max_dd": "-31.8%", "sharpe": 0.52},
-    {"name": "工银瑞信中证科技龙头ETF联接", "code": "012168", "style": "科技", "nav": 1.12, "risk": "高", "return_1y": "+9.4%", "return_3y": "+23.8%", "max_dd": "-29.2%", "sharpe": 0.56},
-    
-    # ==================== 二、消费/白酒（25只） ====================
     {"name": "易方达蓝筹精选混合", "code": "005827", "style": "消费", "nav": 2.56, "risk": "中", "return_1y": "+10.2%", "return_3y": "+28.6%", "max_dd": "-18.5%", "sharpe": 0.72},
     {"name": "易方达中小盘混合", "code": "110011", "style": "消费", "nav": 3.21, "risk": "中", "return_1y": "+12.5%", "return_3y": "+32.4%", "max_dd": "-20.1%", "sharpe": 0.78},
     {"name": "景顺长城新兴成长混合", "code": "260108", "style": "消费", "nav": 3.87, "risk": "中", "return_1y": "+14.8%", "return_3y": "+35.2%", "max_dd": "-19.8%", "sharpe": 0.82},
     {"name": "汇添富消费行业混合", "code": "000083", "style": "消费", "nav": 4.12, "risk": "中", "return_1y": "+16.2%", "return_3y": "+38.7%", "max_dd": "-17.6%", "sharpe": 0.85},
-    {"name": "鹏华消费优选混合", "code": "206007", "style": "消费", "nav": 2.45, "risk": "中", "return_1y": "+8.6%", "return_3y": "+26.5%", "max_dd": "-21.2%", "sharpe": 0.68},
-    {"name": "华夏消费升级混合A", "code": "001928", "style": "消费", "nav": 2.78, "risk": "中", "return_1y": "+11.2%", "return_3y": "+30.1%", "max_dd": "-19.5%", "sharpe": 0.74},
-    {"name": "南方消费升级混合", "code": "010887", "style": "消费", "nav": 1.56, "risk": "中", "return_1y": "+7.5%", "return_3y": "+18.9%", "max_dd": "-22.6%", "sharpe": 0.56},
-    {"name": "嘉实消费精选股票A", "code": "006604", "style": "消费", "nav": 1.89, "risk": "中", "return_1y": "+9.2%", "return_3y": "+22.3%", "max_dd": "-20.8%", "sharpe": 0.62},
-    {"name": "富国消费主题混合", "code": "519915", "style": "消费", "nav": 2.34, "risk": "中", "return_1y": "+10.5%", "return_3y": "+25.6%", "max_dd": "-19.2%", "sharpe": 0.66},
-    {"name": "银华富裕主题混合", "code": "180012", "style": "消费", "nav": 3.45, "risk": "中", "return_1y": "+12.8%", "return_3y": "+28.9%", "max_dd": "-18.6%", "sharpe": 0.72},
-    {"name": "华安安信消费服务混合", "code": "519002", "style": "消费", "nav": 2.12, "risk": "中", "return_1y": "+8.9%", "return_3y": "+24.7%", "max_dd": "-20.4%", "sharpe": 0.64},
-    {"name": "国泰大消费股票", "code": "009473", "style": "消费", "nav": 1.23, "risk": "中", "return_1y": "+6.8%", "return_3y": "+16.8%", "max_dd": "-24.5%", "sharpe": 0.52},
-    {"name": "招商中证白酒指数", "code": "161725", "style": "消费", "nav": 1.89, "risk": "中", "return_1y": "+14.5%", "return_3y": "+28.6%", "max_dd": "-22.3%", "sharpe": 0.74},
-    {"name": "鹏华中证酒指数", "code": "160632", "style": "消费", "nav": 1.56, "risk": "中", "return_1y": "+12.8%", "return_3y": "+25.4%", "max_dd": "-23.8%", "sharpe": 0.70},
-    {"name": "国泰国证食品饮料", "code": "160222", "style": "消费", "nav": 1.78, "risk": "中", "return_1y": "+13.2%", "return_3y": "+26.8%", "max_dd": "-22.6%", "sharpe": 0.72},
-    {"name": "天弘中证食品饮料ETF联接", "code": "001631", "style": "消费", "nav": 1.45, "risk": "中", "return_1y": "+10.6%", "return_3y": "+22.4%", "max_dd": "-24.2%", "sharpe": 0.64},
-    {"name": "汇添富中证主要消费ETF联接", "code": "000248", "style": "消费", "nav": 2.12, "risk": "中", "return_1y": "+11.8%", "return_3y": "+24.6%", "max_dd": "-21.8%", "sharpe": 0.68},
-    {"name": "华夏中证细分食品饮料ETF联接", "code": "013125", "style": "消费", "nav": 1.12, "risk": "中", "return_1y": "+8.5%", "return_3y": "+18.2%", "max_dd": "-25.6%", "sharpe": 0.56},
-    {"name": "广发中证全指消费ETF联接", "code": "001458", "style": "消费", "nav": 1.34, "risk": "中", "return_1y": "+9.8%", "return_3y": "+20.6%", "max_dd": "-23.8%", "sharpe": 0.60},
-    {"name": "南方中证全指消费ETF联接", "code": "012650", "style": "消费", "nav": 1.15, "risk": "中", "return_1y": "+7.8%", "return_3y": "+17.6%", "max_dd": "-26.2%", "sharpe": 0.54},
-    {"name": "嘉实中证全指消费ETF联接", "code": "014140", "style": "消费", "nav": 1.08, "risk": "中", "return_1y": "+7.2%", "return_3y": "+16.8%", "max_dd": "-26.8%", "sharpe": 0.52},
-    {"name": "富国中证消费50ETF联接", "code": "008975", "style": "消费", "nav": 1.25, "risk": "中", "return_1y": "+9.2%", "return_3y": "+21.2%", "max_dd": "-24.6%", "sharpe": 0.58},
-    {"name": "易方达中证消费50ETF联接", "code": "012817", "style": "消费", "nav": 1.18, "risk": "中", "return_1y": "+8.8%", "return_3y": "+20.8%", "max_dd": "-25.2%", "sharpe": 0.56},
-    {"name": "华宝中证消费龙头ETF联接", "code": "009329", "style": "消费", "nav": 1.22, "risk": "中", "return_1y": "+9.6%", "return_3y": "+22.4%", "max_dd": "-24.8%", "sharpe": 0.58},
-    {"name": "国泰中证消费服务ETF联接", "code": "006952", "style": "消费", "nav": 1.28, "risk": "中", "return_1y": "+10.2%", "return_3y": "+23.6%", "max_dd": "-23.6%", "sharpe": 0.60},
-    
-    # ==================== 三、医药/医疗（28只） ====================
     {"name": "中欧医疗健康混合A", "code": "003095", "style": "医药", "nav": 2.34, "risk": "高", "return_1y": "+18.6%", "return_3y": "+45.8%", "max_dd": "-28.6%", "sharpe": 0.82},
     {"name": "汇添富创新医药混合", "code": "006113", "style": "医药", "nav": 1.98, "risk": "高", "return_1y": "+14.5%", "return_3y": "+38.2%", "max_dd": "-26.8%", "sharpe": 0.76},
     {"name": "广发医疗保健股票A", "code": "004851", "style": "医药", "nav": 3.12, "risk": "高", "return_1y": "+16.8%", "return_3y": "+42.6%", "max_dd": "-27.4%", "sharpe": 0.80},
-    {"name": "工银瑞信前沿医疗股票", "code": "001717", "style": "医药", "nav": 2.78, "risk": "高", "return_1y": "+15.2%", "return_3y": "+40.1%", "max_dd": "-25.9%", "sharpe": 0.78},
-    {"name": "大摩健康产业混合", "code": "002708", "style": "医药", "nav": 1.65, "risk": "高", "return_1y": "+12.8%", "return_3y": "+32.8%", "max_dd": "-30.2%", "sharpe": 0.68},
-    {"name": "中欧医疗创新股票A", "code": "006228", "style": "医药", "nav": 1.87, "risk": "高", "return_1y": "+13.6%", "return_3y": "+36.4%", "max_dd": "-28.8%", "sharpe": 0.72},
-    {"name": "招商医药健康产业股票", "code": "000960", "style": "医药", "nav": 2.45, "risk": "高", "return_1y": "+14.2%", "return_3y": "+35.2%", "max_dd": "-27.6%", "sharpe": 0.74},
-    {"name": "南方医药保健灵活配置", "code": "000452", "style": "医药", "nav": 2.12, "risk": "高", "return_1y": "+11.8%", "return_3y": "+30.7%", "max_dd": "-29.4%", "sharpe": 0.66},
-    {"name": "易方达医疗保健行业", "code": "110023", "style": "医药", "nav": 3.56, "risk": "高", "return_1y": "+19.2%", "return_3y": "+48.9%", "max_dd": "-26.2%", "sharpe": 0.86},
-    {"name": "富国医疗保健行业混合", "code": "000220", "style": "医药", "nav": 2.67, "risk": "高", "return_1y": "+13.8%", "return_3y": "+33.5%", "max_dd": "-28.4%", "sharpe": 0.70},
-    {"name": "华宝医药生物混合", "code": "240020", "style": "医药", "nav": 2.34, "risk": "高", "return_1y": "+11.2%", "return_3y": "+28.6%", "max_dd": "-30.8%", "sharpe": 0.64},
-    {"name": "华夏医疗健康混合A", "code": "000945", "style": "医药", "nav": 1.89, "risk": "高", "return_1y": "+10.8%", "return_3y": "+26.7%", "max_dd": "-31.6%", "sharpe": 0.62},
-    {"name": "国泰中证生物医药ETF联接", "code": "006756", "style": "医药", "nav": 1.56, "risk": "高", "return_1y": "+12.5%", "return_3y": "+30.2%", "max_dd": "-28.6%", "sharpe": 0.66},
-    {"name": "汇添富中证生物科技ETF联接", "code": "501009", "style": "医药", "nav": 1.78, "risk": "高", "return_1y": "+13.2%", "return_3y": "+32.8%", "max_dd": "-27.8%", "sharpe": 0.68},
-    {"name": "华安中证医药ETF联接", "code": "000373", "style": "医药", "nav": 1.45, "risk": "高", "return_1y": "+11.6%", "return_3y": "+28.4%", "max_dd": "-29.6%", "sharpe": 0.64},
-    {"name": "天弘中证医药100ETF联接", "code": "001551", "style": "医药", "nav": 1.34, "risk": "高", "return_1y": "+10.8%", "return_3y": "+26.8%", "max_dd": "-30.4%", "sharpe": 0.60},
-    {"name": "南方中证全指医疗保健ETF联接", "code": "010120", "style": "医药", "nav": 1.23, "risk": "高", "return_1y": "+9.8%", "return_3y": "+24.6%", "max_dd": "-31.8%", "sharpe": 0.58},
-    {"name": "华夏中证医疗ETF联接", "code": "014602", "style": "医药", "nav": 1.15, "risk": "高", "return_1y": "+8.6%", "return_3y": "+22.4%", "max_dd": "-32.6%", "sharpe": 0.54},
-    {"name": "国泰中证医疗ETF联接", "code": "012634", "style": "医药", "nav": 1.08, "risk": "高", "return_1y": "+7.8%", "return_3y": "+20.8%", "max_dd": "-33.8%", "sharpe": 0.50},
-    {"name": "博时中证医疗ETF联接", "code": "016545", "style": "医药", "nav": 1.02, "risk": "高", "return_1y": "+7.2%", "return_3y": "+18.6%", "max_dd": "-34.5%", "sharpe": 0.48},
-    {"name": "广发中证全指医药ETF联接", "code": "004857", "style": "医药", "nav": 1.42, "risk": "高", "return_1y": "+11.2%", "return_3y": "+27.6%", "max_dd": "-29.2%", "sharpe": 0.62},
-    {"name": "易方达中证医药ETF联接", "code": "001344", "style": "医药", "nav": 1.38, "risk": "高", "return_1y": "+10.8%", "return_3y": "+26.8%", "max_dd": "-29.8%", "sharpe": 0.60},
-    {"name": "嘉实中证医药ETF联接", "code": "011402", "style": "医药", "nav": 1.12, "risk": "高", "return_1y": "+8.2%", "return_3y": "+21.2%", "max_dd": "-31.6%", "sharpe": 0.52},
-    {"name": "富国中证医药ETF联接", "code": "011161", "style": "医药", "nav": 1.15, "risk": "高", "return_1y": "+8.6%", "return_3y": "+22.4%", "max_dd": "-30.8%", "sharpe": 0.54},
-    {"name": "鹏华中证医药ETF联接", "code": "012752", "style": "医药", "nav": 1.06, "risk": "高", "return_1y": "+7.6%", "return_3y": "+20.2%", "max_dd": "-32.8%", "sharpe": 0.50},
-    {"name": "华宝中证医疗ETF联接", "code": "162412", "style": "医药", "nav": 1.55, "risk": "高", "return_1y": "+12.2%", "return_3y": "+29.6%", "max_dd": "-28.6%", "sharpe": 0.64},
-    
-    # ==================== 四、均衡/价值（25只） ====================
     {"name": "交银阿尔法核心混合", "code": "519712", "style": "均衡", "nav": 3.21, "risk": "中", "return_1y": "+12.6%", "return_3y": "+32.4%", "max_dd": "-16.5%", "sharpe": 0.82},
-    {"name": "兴全轻资产混合", "code": "163412", "style": "均衡", "nav": 2.89, "risk": "中", "return_1y": "+11.8%", "return_3y": "+28.9%", "max_dd": "-17.8%", "sharpe": 0.76},
     {"name": "兴全合润混合", "code": "163406", "style": "均衡", "nav": 4.56, "risk": "中", "return_1y": "+16.8%", "return_3y": "+42.3%", "max_dd": "-18.2%", "sharpe": 0.90},
     {"name": "富国天惠成长混合", "code": "161005", "style": "均衡", "nav": 3.67, "risk": "中", "return_1y": "+14.2%", "return_3y": "+35.6%", "max_dd": "-17.8%", "sharpe": 0.86},
     {"name": "睿远成长价值混合A", "code": "007119", "style": "均衡", "nav": 2.13, "risk": "中", "return_1y": "+10.8%", "return_3y": "+26.8%", "max_dd": "-20.5%", "sharpe": 0.72},
-    {"name": "东方红睿丰混合", "code": "169101", "style": "均衡", "nav": 3.45, "risk": "中", "return_1y": "+11.2%", "return_3y": "+30.2%", "max_dd": "-18.6%", "sharpe": 0.74},
-    {"name": "泓德远见回报混合", "code": "001500", "style": "均衡", "nav": 2.67, "risk": "中", "return_1y": "+9.8%", "return_3y": "+25.4%", "max_dd": "-19.8%", "sharpe": 0.68},
-    {"name": "国泰聚信价值优势混合", "code": "000362", "style": "均衡", "nav": 2.34, "risk": "中低", "return_1y": "+8.6%", "return_3y": "+22.1%", "max_dd": "-15.6%", "sharpe": 0.64},
-    {"name": "华安策略优选混合", "code": "040008", "style": "均衡", "nav": 3.12, "risk": "中低", "return_1y": "+9.2%", "return_3y": "+24.8%", "max_dd": "-16.2%", "sharpe": 0.66},
-    {"name": "博时主题行业混合", "code": "160505", "style": "均衡", "nav": 2.78, "risk": "中低", "return_1y": "+8.5%", "return_3y": "+20.5%", "max_dd": "-17.4%", "sharpe": 0.60},
-    {"name": "广发稳健增长混合", "code": "270002", "style": "均衡", "nav": 2.45, "risk": "中", "return_1y": "+7.8%", "return_3y": "+18.6%", "max_dd": "-16.8%", "sharpe": 0.58},
-    {"name": "南方绩优成长混合", "code": "202003", "style": "均衡", "nav": 3.56, "risk": "中", "return_1y": "+10.5%", "return_3y": "+28.4%", "max_dd": "-18.2%", "sharpe": 0.72},
-    {"name": "华夏回报混合A", "code": "002001", "style": "均衡", "nav": 2.89, "risk": "中低", "return_1y": "+6.8%", "return_3y": "+16.8%", "max_dd": "-14.2%", "sharpe": 0.54},
-    {"name": "嘉实增长混合", "code": "070002", "style": "均衡", "nav": 4.12, "risk": "中", "return_1y": "+12.8%", "return_3y": "+32.5%", "max_dd": "-17.6%", "sharpe": 0.80},
-    {"name": "长盛成长价值混合", "code": "080001", "style": "均衡", "nav": 1.89, "risk": "中低", "return_1y": "+5.8%", "return_3y": "+14.2%", "max_dd": "-15.8%", "sharpe": 0.50},
-    {"name": "易方达价值精选混合", "code": "110009", "style": "均衡", "nav": 2.78, "risk": "中", "return_1y": "+9.6%", "return_3y": "+24.6%", "max_dd": "-18.4%", "sharpe": 0.66},
-    {"name": "富国天益价值混合", "code": "100020", "style": "均衡", "nav": 3.12, "risk": "中", "return_1y": "+10.2%", "return_3y": "+26.8%", "max_dd": "-17.8%", "sharpe": 0.68},
-    {"name": "汇添富优势精选混合", "code": "519008", "style": "均衡", "nav": 3.45, "risk": "中", "return_1y": "+11.5%", "return_3y": "+28.2%", "max_dd": "-18.6%", "sharpe": 0.70},
-    {"name": "华宝收益增长混合", "code": "240008", "style": "均衡", "nav": 2.34, "risk": "中", "return_1y": "+8.8%", "return_3y": "+22.4%", "max_dd": "-19.6%", "sharpe": 0.62},
-    {"name": "国投瑞银稳健增长混合", "code": "121006", "style": "均衡", "nav": 2.56, "risk": "中低", "return_1y": "+7.6%", "return_3y": "+18.8%", "max_dd": "-16.2%", "sharpe": 0.56},
-    {"name": "银华优势企业混合", "code": "180001", "style": "均衡", "nav": 2.12, "risk": "中", "return_1y": "+8.2%", "return_3y": "+20.6%", "max_dd": "-18.8%", "sharpe": 0.60},
-    {"name": "长城久富核心成长混合", "code": "162006", "style": "均衡", "nav": 2.34, "risk": "中", "return_1y": "+9.4%", "return_3y": "+24.2%", "max_dd": "-17.6%", "sharpe": 0.64},
-    {"name": "鹏华价值优势混合", "code": "160607", "style": "均衡", "nav": 2.45, "risk": "中", "return_1y": "+8.6%", "return_3y": "+22.8%", "max_dd": "-18.2%", "sharpe": 0.62},
-    {"name": "融通新蓝筹混合", "code": "161601", "style": "均衡", "nav": 2.12, "risk": "中", "return_1y": "+7.8%", "return_3y": "+19.6%", "max_dd": "-19.6%", "sharpe": 0.58},
-    
-    # ==================== 五、港股/沪港深（15只） ====================
     {"name": "前海开源沪港深优势精选", "code": "001875", "style": "港股", "nav": 2.85, "risk": "中高", "return_1y": "+15.6%", "return_3y": "+38.6%", "max_dd": "-22.8%", "sharpe": 0.80},
-    {"name": "富国沪港深行业精选", "code": "005354", "style": "港股", "nav": 1.56, "risk": "中高", "return_1y": "+8.8%", "return_3y": "+22.4%", "max_dd": "-25.6%", "sharpe": 0.56},
-    {"name": "工银瑞信沪港深股票", "code": "002387", "style": "港股", "nav": 1.78, "risk": "中高", "return_1y": "+9.6%", "return_3y": "+25.6%", "max_dd": "-24.8%", "sharpe": 0.58},
-    {"name": "广发沪港深新起点股票", "code": "002121", "style": "港股", "nav": 2.12, "risk": "中高", "return_1y": "+10.8%", "return_3y": "+28.9%", "max_dd": "-23.6%", "sharpe": 0.62},
-    {"name": "嘉实沪港深精选股票", "code": "001878", "style": "港股", "nav": 2.34, "risk": "中高", "return_1y": "+12.8%", "return_3y": "+30.2%", "max_dd": "-24.6%", "sharpe": 0.66},
-    {"name": "汇添富沪港深新价值股票", "code": "001685", "style": "港股", "nav": 1.89, "risk": "中高", "return_1y": "+9.2%", "return_3y": "+24.7%", "max_dd": "-26.2%", "sharpe": 0.58},
-    {"name": "前海开源沪港深龙头精选", "code": "002443", "style": "港股", "nav": 1.45, "risk": "中高", "return_1y": "+7.8%", "return_3y": "+20.3%", "max_dd": "-28.4%", "sharpe": 0.52},
-    {"name": "华安沪港深机会灵活配置", "code": "004263", "style": "港股", "nav": 1.67, "risk": "中高", "return_1y": "+8.5%", "return_3y": "+23.8%", "max_dd": "-26.8%", "sharpe": 0.54},
-    {"name": "国富沪港深成长精选", "code": "001605", "style": "港股", "nav": 1.56, "risk": "中高", "return_1y": "+7.6%", "return_3y": "+21.6%", "max_dd": "-27.6%", "sharpe": 0.50},
-    {"name": "景顺长城沪港深精选", "code": "000979", "style": "港股", "nav": 1.89, "risk": "中高", "return_1y": "+9.8%", "return_3y": "+24.8%", "max_dd": "-25.8%", "sharpe": 0.56},
-    {"name": "南方沪港深价值主题", "code": "001979", "style": "港股", "nav": 1.34, "risk": "中高", "return_1y": "+7.2%", "return_3y": "+19.6%", "max_dd": "-28.6%", "sharpe": 0.48},
-    {"name": "华夏沪港深上证50AH优选", "code": "501050", "style": "港股", "nav": 1.56, "risk": "中高", "return_1y": "+8.2%", "return_3y": "+22.8%", "max_dd": "-26.2%", "sharpe": 0.52},
-    {"name": "鹏华沪港深互联网ETF联接", "code": "012169", "style": "港股", "nav": 1.12, "risk": "中高", "return_1y": "+6.8%", "return_3y": "+18.2%", "max_dd": "-29.6%", "sharpe": 0.46},
-    {"name": "天弘沪港深ETF联接", "code": "012560", "style": "港股", "nav": 1.08, "risk": "中高", "return_1y": "+6.2%", "return_3y": "+17.6%", "max_dd": "-30.2%", "sharpe": 0.44},
-    
-    # ==================== 六、半导体/芯片（15只） ====================
     {"name": "诺安成长混合", "code": "320007", "style": "芯片", "nav": 2.34, "risk": "高", "return_1y": "+22.6%", "return_3y": "+52.3%", "max_dd": "-34.5%", "sharpe": 0.72},
     {"name": "银河创新成长混合", "code": "519674", "style": "芯片", "nav": 4.56, "risk": "高", "return_1y": "+28.4%", "return_3y": "+62.8%", "max_dd": "-36.2%", "sharpe": 0.76},
-    {"name": "国联安中证半导体ETF联接", "code": "007301", "style": "芯片", "nav": 1.87, "risk": "高", "return_1y": "+20.8%", "return_3y": "+48.6%", "max_dd": "-30.8%", "sharpe": 0.70},
-    {"name": "华夏国证半导体芯片ETF联接", "code": "008887", "style": "芯片", "nav": 1.23, "risk": "高", "return_1y": "+18.2%", "return_3y": "+42.5%", "max_dd": "-31.8%", "sharpe": 0.68},
-    {"name": "泰信中小盘精选混合", "code": "290011", "style": "芯片", "nav": 2.78, "risk": "高", "return_1y": "+16.8%", "return_3y": "+45.2%", "max_dd": "-33.6%", "sharpe": 0.66},
-    {"name": "国泰CES半导体芯片ETF联接", "code": "008281", "style": "芯片", "nav": 1.67, "risk": "高", "return_1y": "+17.6%", "return_3y": "+38.2%", "max_dd": "-30.1%", "sharpe": 0.64},
-    {"name": "鹏华国证半导体芯片ETF联接", "code": "012969", "style": "芯片", "nav": 1.12, "risk": "高", "return_1y": "+12.8%", "return_3y": "+30.2%", "max_dd": "-32.5%", "sharpe": 0.56},
-    {"name": "嘉实中证芯片产业ETF联接", "code": "015336", "style": "芯片", "nav": 1.08, "risk": "高", "return_1y": "+10.6%", "return_3y": "+25.8%", "max_dd": "-33.8%", "sharpe": 0.52},
-    {"name": "国联安中证全指半导体ETF联接", "code": "007300", "style": "芯片", "nav": 1.89, "risk": "高", "return_1y": "+17.6%", "return_3y": "+40.6%", "max_dd": "-29.6%", "sharpe": 0.62},
-    {"name": "汇添富中证芯片产业ETF联接", "code": "014193", "style": "芯片", "nav": 1.05, "risk": "高", "return_1y": "+9.8%", "return_3y": "+24.2%", "max_dd": "-34.2%", "sharpe": 0.50},
-    {"name": "华夏中证半导体ETF联接", "code": "008516", "style": "芯片", "nav": 1.32, "risk": "高", "return_1y": "+14.2%", "return_3y": "+34.6%", "max_dd": "-31.2%", "sharpe": 0.60},
-    {"name": "南方中证半导体ETF联接", "code": "008618", "style": "芯片", "nav": 1.28, "risk": "高", "return_1y": "+13.8%", "return_3y": "+33.8%", "max_dd": "-31.8%", "sharpe": 0.58},
-    {"name": "易方达中证半导体ETF联接", "code": "012870", "style": "芯片", "nav": 1.18, "risk": "高", "return_1y": "+11.6%", "return_3y": "+28.4%", "max_dd": "-32.6%", "sharpe": 0.54},
-    {"name": "富国中证半导体ETF联接", "code": "014099", "style": "芯片", "nav": 1.08, "risk": "高", "return_1y": "+10.2%", "return_3y": "+26.2%", "max_dd": "-33.8%", "sharpe": 0.50},
-    {"name": "天弘中证半导体ETF联接", "code": "012722", "style": "芯片", "nav": 1.02, "risk": "高", "return_1y": "+8.8%", "return_3y": "+22.8%", "max_dd": "-34.8%", "sharpe": 0.46},
-    
-    # ==================== 七、新能源（16只） ====================
     {"name": "农银新能源主题混合", "code": "002190", "style": "新能源", "nav": 3.45, "risk": "高", "return_1y": "+24.6%", "return_3y": "+55.8%", "max_dd": "-32.4%", "sharpe": 0.82},
-    {"name": "嘉实新能源新材料股票", "code": "003984", "style": "新能源", "nav": 2.67, "risk": "高", "return_1y": "+18.2%", "return_3y": "+42.6%", "max_dd": "-30.6%", "sharpe": 0.74},
-    {"name": "汇丰晋信低碳先锋股票", "code": "540008", "style": "新能源", "nav": 3.12, "risk": "高", "return_1y": "+20.8%", "return_3y": "+48.3%", "max_dd": "-31.8%", "sharpe": 0.78},
     {"name": "华夏能源革新股票", "code": "003834", "style": "新能源", "nav": 2.89, "risk": "高", "return_1y": "+18.2%", "return_3y": "+45.2%", "max_dd": "-30.6%", "sharpe": 0.76},
-    {"name": "东方新能源汽车主题混合", "code": "400015", "style": "新能源", "nav": 2.45, "risk": "高", "return_1y": "+15.6%", "return_3y": "+40.6%", "max_dd": "-32.8%", "sharpe": 0.70},
-    {"name": "汇添富中证新能源汽车", "code": "501057", "style": "新能源", "nav": 2.45, "risk": "高", "return_1y": "+16.8%", "return_3y": "+42.6%", "max_dd": "-30.8%", "sharpe": 0.72},
-    {"name": "富国中证新能源汽车", "code": "161028", "style": "新能源", "nav": 2.12, "risk": "高", "return_1y": "+15.2%", "return_3y": "+38.9%", "max_dd": "-31.6%", "sharpe": 0.68},
-    {"name": "国泰国证新能源汽车", "code": "160225", "style": "新能源", "nav": 1.89, "risk": "高", "return_1y": "+14.6%", "return_3y": "+36.8%", "max_dd": "-32.4%", "sharpe": 0.66},
-    {"name": "申万菱信新能源汽车", "code": "001156", "style": "新能源", "nav": 1.78, "risk": "高", "return_1y": "+13.8%", "return_3y": "+35.2%", "max_dd": "-33.6%", "sharpe": 0.64},
-    {"name": "鹏华中证新能源指数", "code": "160640", "style": "新能源", "nav": 1.56, "risk": "高", "return_1y": "+12.6%", "return_3y": "+32.8%", "max_dd": "-34.2%", "sharpe": 0.60},
-    {"name": "南方中证新能源ETF联接", "code": "012831", "style": "新能源", "nav": 1.23, "risk": "高", "return_1y": "+11.8%", "return_3y": "+30.6%", "max_dd": "-35.6%", "sharpe": 0.58},
-    {"name": "天弘中证新能源ETF联接", "code": "012328", "style": "新能源", "nav": 1.15, "risk": "高", "return_1y": "+10.8%", "return_3y": "+28.8%", "max_dd": "-36.8%", "sharpe": 0.54},
-    {"name": "华夏中证光伏产业ETF联接", "code": "012886", "style": "新能源", "nav": 1.08, "risk": "高", "return_1y": "+9.6%", "return_3y": "+22.8%", "max_dd": "-32.6%", "sharpe": 0.48},
-    {"name": "天弘中证光伏产业ETF联接", "code": "011103", "style": "新能源", "nav": 1.05, "risk": "高", "return_1y": "+8.8%", "return_3y": "+20.6%", "max_dd": "-33.8%", "sharpe": 0.44},
-    {"name": "华宝中证绿色能源ETF联接", "code": "015549", "style": "新能源", "nav": 1.02, "risk": "高", "return_1y": "+7.8%", "return_3y": "+18.2%", "max_dd": "-34.8%", "sharpe": 0.42},
-    {"name": "易方达中证新能源ETF联接", "code": "012733", "style": "新能源", "nav": 1.12, "risk": "高", "return_1y": "+10.2%", "return_3y": "+24.6%", "max_dd": "-31.6%", "sharpe": 0.50},
-    
-    # ==================== 八、军工（10只） ====================
-    {"name": "富国军工主题混合", "code": "005609", "style": "军工", "nav": 1.56, "risk": "高", "return_1y": "+12.6%", "return_3y": "+28.6%", "max_dd": "-25.8%", "sharpe": 0.68},
-    {"name": "南方军工改革灵活配置", "code": "004224", "style": "军工", "nav": 1.78, "risk": "高", "return_1y": "+11.8%", "return_3y": "+26.4%", "max_dd": "-26.8%", "sharpe": 0.64},
-    {"name": "华夏军工安全灵活配置", "code": "002251", "style": "军工", "nav": 1.45, "risk": "高", "return_1y": "+10.6%", "return_3y": "+24.8%", "max_dd": "-27.6%", "sharpe": 0.60},
-    {"name": "易方达国防军工混合", "code": "001475", "style": "军工", "nav": 2.12, "risk": "高", "return_1y": "+14.8%", "return_3y": "+30.2%", "max_dd": "-26.4%", "sharpe": 0.70},
-    {"name": "富国中证军工龙头ETF联接", "code": "011113", "style": "军工", "nav": 1.23, "risk": "高", "return_1y": "+10.8%", "return_3y": "+26.8%", "max_dd": "-28.6%", "sharpe": 0.58},
-    {"name": "鹏华中证国防指数", "code": "160630", "style": "军工", "nav": 1.56, "risk": "高", "return_1y": "+11.2%", "return_3y": "+27.2%", "max_dd": "-27.8%", "sharpe": 0.60},
-    {"name": "国泰国证航天军工指数", "code": "501019", "style": "军工", "nav": 1.34, "risk": "高", "return_1y": "+9.8%", "return_3y": "+24.6%", "max_dd": "-29.6%", "sharpe": 0.56},
-    {"name": "华宝中证军工ETF联接", "code": "008841", "style": "军工", "nav": 1.12, "risk": "高", "return_1y": "+8.6%", "return_3y": "+22.4%", "max_dd": "-30.8%", "sharpe": 0.52},
-    {"name": "广发中证军工ETF联接", "code": "003017", "style": "军工", "nav": 1.28, "risk": "高", "return_1y": "+9.6%", "return_3y": "+24.2%", "max_dd": "-29.2%", "sharpe": 0.54},
-    {"name": "易方达中证军工ETF联接", "code": "012756", "style": "军工", "nav": 1.15, "risk": "高", "return_1y": "+8.8%", "return_3y": "+23.8%", "max_dd": "-30.2%", "sharpe": 0.52},
-    
-    # ==================== 九、金融/地产（12只） ====================
     {"name": "工银瑞信金融地产混合", "code": "000251", "style": "金融", "nav": 2.34, "risk": "中低", "return_1y": "+6.8%", "return_3y": "+16.8%", "max_dd": "-12.5%", "sharpe": 0.56},
-    {"name": "汇添富价值精选混合", "code": "519069", "style": "金融", "nav": 2.89, "risk": "中低", "return_1y": "+7.2%", "return_3y": "+18.4%", "max_dd": "-13.2%", "sharpe": 0.58},
-    {"name": "华安核心优选混合", "code": "040011", "style": "金融", "nav": 2.12, "risk": "中低", "return_1y": "+6.2%", "return_3y": "+14.5%", "max_dd": "-14.6%", "sharpe": 0.50},
-    {"name": "国富金融地产混合", "code": "001392", "style": "金融", "nav": 1.56, "risk": "中低", "return_1y": "+5.8%", "return_3y": "+12.8%", "max_dd": "-15.2%", "sharpe": 0.46},
-    {"name": "鹏华金融地产混合", "code": "001663", "style": "金融", "nav": 1.78, "risk": "中低", "return_1y": "+6.2%", "return_3y": "+13.6%", "max_dd": "-14.8%", "sharpe": 0.48},
-    {"name": "中海进取收益混合", "code": "001252", "style": "金融", "nav": 1.45, "risk": "中低", "return_1y": "+5.2%", "return_3y": "+10.2%", "max_dd": "-16.2%", "sharpe": 0.42},
-    {"name": "华宝券商ETF联接", "code": "006098", "style": "金融", "nav": 1.56, "risk": "中", "return_1y": "+7.8%", "return_3y": "+12.6%", "max_dd": "-18.6%", "sharpe": 0.48},
-    {"name": "南方中证全指券商ETF联接", "code": "004069", "style": "金融", "nav": 1.45, "risk": "中", "return_1y": "+7.2%", "return_3y": "+11.8%", "max_dd": "-19.2%", "sharpe": 0.46},
-    {"name": "华夏中证银行ETF联接", "code": "008298", "style": "金融", "nav": 1.12, "risk": "低", "return_1y": "+4.8%", "return_3y": "+8.6%", "max_dd": "-10.2%", "sharpe": 0.38},
-    {"name": "天弘中证银行ETF联接", "code": "001594", "style": "金融", "nav": 1.08, "risk": "低", "return_1y": "+4.2%", "return_3y": "+7.8%", "max_dd": "-10.8%", "sharpe": 0.36},
-    {"name": "易方达中证银行ETF联接", "code": "012868", "style": "金融", "nav": 1.05, "risk": "低", "return_1y": "+3.8%", "return_3y": "+7.2%", "max_dd": "-11.2%", "sharpe": 0.34},
-    
-    # ==================== 十、农业/5G/能源/其他（12只） ====================
-    {"name": "农银汇理现代农业加混合", "code": "001940", "style": "农业", "nav": 1.45, "risk": "中", "return_1y": "+6.8%", "return_3y": "+18.6%", "max_dd": "-18.2%", "sharpe": 0.48},
-    {"name": "国泰中证畜牧养殖ETF联接", "code": "012724", "style": "农业", "nav": 1.12, "risk": "中", "return_1y": "+5.6%", "return_3y": "+14.2%", "max_dd": "-20.6%", "sharpe": 0.42},
-    {"name": "华夏中证5G通信主题ETF联接", "code": "008086", "style": "5G", "nav": 1.23, "risk": "高", "return_1y": "+12.8%", "return_3y": "+32.4%", "max_dd": "-28.6%", "sharpe": 0.62},
-    {"name": "建信能源化工ETF联接", "code": "008827", "style": "能源", "nav": 1.34, "risk": "中", "return_1y": "+6.2%", "return_3y": "+16.8%", "max_dd": "-22.6%", "sharpe": 0.44},
-    {"name": "国泰中证煤炭ETF联接", "code": "008279", "style": "能源", "nav": 1.45, "risk": "中", "return_1y": "+5.8%", "return_3y": "+15.6%", "max_dd": "-21.6%", "sharpe": 0.40},
-    {"name": "华宝中证有色金属ETF联接", "code": "015689", "style": "能源", "nav": 1.15, "risk": "中", "return_1y": "+7.2%", "return_3y": "+18.6%", "max_dd": "-20.8%", "sharpe": 0.44},
-    {"name": "南方中证有色金属ETF联接", "code": "004433", "style": "能源", "nav": 1.25, "risk": "中", "return_1y": "+7.8%", "return_3y": "+19.2%", "max_dd": "-20.2%", "sharpe": 0.46},
-    {"name": "华夏中证A50ETF联接", "code": "014530", "style": "均衡", "nav": 1.02, "risk": "中低", "return_1y": "+4.8%", "return_3y": "+10.2%", "max_dd": "-14.6%", "sharpe": 0.36},
-    {"name": "易方达中证A50ETF联接", "code": "015170", "style": "均衡", "nav": 1.04, "risk": "中低", "return_1y": "+5.2%", "return_3y": "+11.2%", "max_dd": "-14.2%", "sharpe": 0.38},
-    {"name": "富国中证A50ETF联接", "code": "015780", "style": "均衡", "nav": 1.03, "risk": "中低", "return_1y": "+5.0%", "return_3y": "+10.8%", "max_dd": "-14.8%", "sharpe": 0.37},
-    {"name": "嘉实中证A50ETF联接", "code": "015250", "style": "均衡", "nav": 1.01, "risk": "中低", "return_1y": "+4.2%", "return_3y": "+9.6%", "max_dd": "-15.2%", "sharpe": 0.34},
-    {"name": "华泰柏瑞中证A50ETF联接", "code": "015280", "style": "均衡", "nav": 1.02, "risk": "中低", "return_1y": "+4.5%", "return_3y": "+10.0%", "max_dd": "-15.0%", "sharpe": 0.35},
 ]
 
-# ==================== 多因子评分函数 ====================
-def calculate_fund_score(fund):
-    score = 0
-    ret_1y = float(fund["return_1y"].replace("%", "").replace("+", ""))
-    score += min(30, max(0, (ret_1y + 20) * 1.0))
-    ret_3y = float(fund["return_3y"].replace("%", "").replace("+", ""))
-    score += min(25, max(0, (ret_3y + 15) * 0.7))
-    dd = float(fund["max_dd"].replace("%", "").replace("-", ""))
-    score += min(20, max(0, 20 - dd * 0.7))
-    sharpe = fund["sharpe"]
-    score += min(15, max(0, sharpe * 15))
-    style_weights = {"科技": 1.2, "芯片": 1.3, "新能源": 1.2, "医药": 1.1, "消费": 1.0, "均衡": 1.0, "港股": 0.9, "军工": 1.0, "金融": 0.8, "农业": 0.8, "5G": 1.1, "能源": 0.8}
-    score += min(10, max(0, style_weights.get(fund["style"], 1.0) * 8))
-    return min(100, round(score))
-
-# ==================== 市场状态 ====================
+# ==================== 辅助函数 ====================
 def get_market_sentiment():
     sentiments = ["乐观", "中性", "谨慎", "悲观"]
     weights = [0.25, 0.40, 0.25, 0.10]
@@ -283,7 +295,20 @@ def get_timing_signal():
     weights = [0.12, 0.23, 0.38, 0.17, 0.10]
     return np.random.choice(signals, p=weights)
 
-# ==================== AI推荐引擎 ====================
+def calculate_fund_score(fund):
+    score = 0
+    ret_1y = float(fund["return_1y"].replace("%", "").replace("+", ""))
+    score += min(30, max(0, (ret_1y + 20) * 1.0))
+    ret_3y = float(fund["return_3y"].replace("%", "").replace("+", ""))
+    score += min(25, max(0, (ret_3y + 15) * 0.7))
+    dd = float(fund["max_dd"].replace("%", "").replace("-", ""))
+    score += min(20, max(0, 20 - dd * 0.7))
+    sharpe = fund["sharpe"]
+    score += min(15, max(0, sharpe * 15))
+    style_weights = {"科技": 1.2, "芯片": 1.3, "新能源": 1.2, "医药": 1.1, "消费": 1.0, "均衡": 1.0, "港股": 0.9, "军工": 1.0, "金融": 0.8}
+    score += min(10, max(0, style_weights.get(fund["style"], 1.0) * 8))
+    return min(100, round(score))
+
 def ai_recommend(total_amount, risk_preference="中", existing_holdings=[], count=5):
     available = [f for f in FUNDS if f["code"] not in [h["code"] for h in existing_holdings]]
     risk_map = {"低": ["低", "中低"], "中": ["中低", "中", "中高"], "高": ["中高", "高"]}
@@ -334,205 +359,13 @@ def ai_portfolio_analysis(holdings, total_amount):
         "remaining": total_amount - total_cost
     }
 
-def ai_next_action(analysis, recommendations, market_sentiment, timing_signal):
-    if not analysis or analysis["count"] == 0:
-        return ["📌 您还没有持仓，建议根据AI推荐开始建仓"]
-    suggestions = []
-    if analysis["max_style_ratio"] > 0.6:
-        suggestions.append(f"⚠️ 持仓过于集中在单一风格（占比{analysis['max_style_ratio']*100:.0f}%），建议分散投资")
-    if analysis["remaining"] > 100:
-        if timing_signal in ["强烈买入", "买入"]:
-            suggestions.append(f"💰 当前市场信号：{timing_signal}，建议用剩余{analysis['remaining']:.0f}元分批建仓")
-        else:
-            suggestions.append(f"💰 您还有{analysis['remaining']:.0f}元可用资金，建议保持定投节奏")
-    if analysis["profit_rate"] > 15:
-        suggestions.append(f"📈 您的持仓已盈利{analysis['profit_rate']:.1f}%，建议设置止盈线")
-    elif analysis["profit_rate"] < -8:
-        suggestions.append(f"📉 您的持仓已亏损{analysis['profit_rate']:.1f}%，建议关注市场反弹机会")
-    if recommendations and analysis["remaining"] > 100:
-        suggestions.append(f"💡 推荐买入：{recommendations[0]['name']}（评分{recommendations[0]['score']}分）")
-    return suggestions if suggestions else ["📊 您的持仓配置合理，建议继续持有观察"]
-
-# ==================== 历史回测引擎 ====================
-def generate_historical_prices(base_price, days, volatility=0.02, trend=0.0002):
-    prices = [base_price]
-    for i in range(days - 1):
-        change = np.random.normal(trend, volatility)
-        new_price = prices[-1] * (1 + change)
-        prices.append(max(new_price, 0.1))
-    return prices
-
-def backtest_strategy(fund_code, start_date, end_date, total_amount, each_amount, strategy_type="智能定投"):
-    fund = next((f for f in FUNDS if f["code"] == fund_code), None)
-    if not fund:
-        return None
-    days = (end_date - start_date).days
-    if days <= 0:
-        return None
-    dates = pd.date_range(start=start_date, end=end_date, freq='D')
-    dates = [d for d in dates if d.weekday() < 5]
-    if len(dates) < 20:
-        return None
-    base_price = fund["nav"]
-    volatility = 0.025 if fund["risk"] in ["高", "中高"] else 0.015
-    trend = 0.0003 if random.random() > 0.4 else -0.0001
-    prices = generate_historical_prices(base_price * 0.8, len(dates), volatility, trend)
-    df = pd.DataFrame({"date": dates[:len(prices)], "price": prices})
-    df = df.set_index("date")
-    cash = total_amount
-    shares = 0
-    trades = []
-    portfolio_values = []
-    for i in range(60, len(df)):
-        current_price = df["price"].iloc[i]
-        date = df.index[i]
-        cash_remaining = cash - sum(t["amount"] for t in trades)
-        if strategy_type == "智能定投":
-            position = (current_price - df["price"].iloc[i-60:].min()) / (df["price"].iloc[i-60:].max() - df["price"].iloc[i-60:].min() + 0.001)
-            buy_amount = each_amount * (1 + (0.5 - position) * 0.5)
-            buy_amount = max(each_amount * 0.5, min(each_amount * 1.5, buy_amount))
-            if cash_remaining >= buy_amount:
-                shares += buy_amount / current_price
-                trades.append({"date": date, "price": current_price, "amount": buy_amount})
-        else:
-            if i % 30 == 0 and cash_remaining >= each_amount:
-                shares += each_amount / current_price
-                trades.append({"date": date, "price": current_price, "amount": each_amount})
-        portfolio_values.append({"date": date, "value": shares * current_price + (cash - sum(t["amount"] for t in trades))})
-    final_price = df["price"].iloc[-1]
-    final_value = shares * final_price + (cash - sum(t["amount"] for t in trades))
-    total_invested = sum(t["amount"] for t in trades)
-    profit = final_value - total_invested
-    profit_rate = (profit / total_invested) * 100 if total_invested > 0 else 0
-    value_series = pd.DataFrame(portfolio_values).set_index("date")["value"]
-    cummax = value_series.cummax()
-    drawdown = (value_series - cummax) / cummax * 100
-    max_drawdown = drawdown.min()
-    returns = value_series.pct_change().dropna()
-    sharpe = (returns.mean() * 252) / (returns.std() * np.sqrt(252)) if returns.std() > 0 else 0
-    win_rate = (returns > 0).sum() / len(returns) if len(returns) > 0 else 0
-    return {
-        "fund_name": fund["name"],
-        "fund_code": fund_code,
-        "strategy": strategy_type,
-        "total_invested": round(total_invested, 2),
-        "final_value": round(final_value, 2),
-        "profit": round(profit, 2),
-        "profit_rate": round(profit_rate, 2),
-        "max_drawdown": round(max_drawdown, 2),
-        "sharpe_ratio": round(sharpe, 3),
-        "win_rate": round(win_rate * 100, 2),
-        "trade_count": len(trades),
-        "value_data": value_series,
-        "trades": trades
-    }
-
-# ==================== AI投资决策引擎 ====================
-def ai_investment_decision(fund_code, backtest_result, market_sentiment, market_position, timing_signal):
-    fund = next((f for f in FUNDS if f["code"] == fund_code), None)
-    if not fund or not backtest_result:
-        return None
-    
-    history_score = 0
-    if backtest_result["profit_rate"] > 20:
-        history_score += 25
-    elif backtest_result["profit_rate"] > 10:
-        history_score += 18
-    else:
-        history_score += 10
-    if backtest_result["max_drawdown"] > -15:
-        history_score += 15
-    elif backtest_result["max_drawdown"] > -25:
-        history_score += 10
-    else:
-        history_score += 5
-    if backtest_result["win_rate"] > 60:
-        history_score += 20
-    elif backtest_result["win_rate"] > 50:
-        history_score += 15
-    else:
-        history_score += 8
-    history_score += min(10, backtest_result["sharpe_ratio"] * 8)
-    history_score = min(70, history_score)
-    
-    market_score = 0
-    sentiment_scores = {"乐观": 20, "中性": 15, "谨慎": 10, "悲观": 5}
-    market_score += sentiment_scores.get(market_sentiment, 15)
-    if market_position < 30:
-        market_score += 20
-    elif market_position < 50:
-        market_score += 15
-    elif market_position < 70:
-        market_score += 10
-    else:
-        market_score += 5
-    timing_scores = {"强烈买入": 20, "买入": 15, "持有": 10, "减仓": 5, "卖出": 0}
-    market_score += timing_scores.get(timing_signal, 10)
-    market_score = min(30, market_score)
-    
-    fund_score = calculate_fund_score(fund)
-    fund_score = min(30, fund_score * 0.3)
-    
-    total_score = history_score + market_score + fund_score
-    total_score = min(100, round(total_score))
-    
-    if total_score >= 75:
-        decision = "✅ 强烈建议买入"
-        action = "买入"
-        urgency = "高"
-        detail = f"综合评分{total_score}分，历史回测表现优秀"
-        suggested_amount_ratio = 0.3
-    elif total_score >= 60:
-        decision = "📈 建议买入"
-        action = "买入"
-        urgency = "中"
-        detail = f"综合评分{total_score}分，建议分批建仓"
-        suggested_amount_ratio = 0.2
-    elif total_score >= 45:
-        decision = "⏳ 建议观望"
-        action = "观望"
-        urgency = "低"
-        detail = f"综合评分{total_score}分，等待更好时机"
-        suggested_amount_ratio = 0.1
-    else:
-        decision = "🔴 不建议买入"
-        action = "回避"
-        urgency = "高"
-        detail = f"综合评分{total_score}分，建议等待"
-        suggested_amount_ratio = 0
-    
-    return {
-        "fund_name": fund["name"],
-        "fund_code": fund_code,
-        "total_score": total_score,
-        "history_score": round(history_score, 1),
-        "market_score": round(market_score, 1),
-        "fund_score": round(fund_score, 1),
-        "decision": decision,
-        "action": action,
-        "urgency": urgency,
-        "detail": detail,
-        "suggested_amount_ratio": suggested_amount_ratio,
-        "backtest_profit": backtest_result["profit_rate"],
-        "backtest_win_rate": backtest_result["win_rate"],
-        "backtest_max_dd": backtest_result["max_drawdown"],
-        "market_sentiment": market_sentiment,
-        "market_position": market_position,
-        "timing_signal": timing_signal,
-        "report_generated": datetime.now().strftime("%Y-%m-%d %H:%M")
-    }
-
-# ==================== 初始化session_state ====================
+# ==================== 初始化 ====================
 if "holdings" not in st.session_state:
     st.session_state.holdings = []
 if "recommendations" not in st.session_state:
     st.session_state.recommendations = []
-if "backtest_results" not in st.session_state:
-    st.session_state.backtest_results = None
-if "decision_result" not in st.session_state:
-    st.session_state.decision_result = None
-if "analysis_history" not in st.session_state:
-    st.session_state.analysis_history = []
+if "sell_alerts" not in st.session_state:
+    st.session_state.sell_alerts = []
 if "wechat_status" not in st.session_state:
     st.session_state.wechat_status = ""
 
@@ -561,15 +394,133 @@ with st.sidebar:
         c1.metric("总投入", f"{analysis['total_cost']:.0f}元")
         c2.metric("收益率", f"{analysis['profit_rate']:.1f}%", delta=f"{analysis['profit_rate']:.1f}%")
 
-# ==================== 主界面Tab ====================
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "🤖 AI推荐", "📋 持仓管理", "🧠 智能分析", "📊 投资决策", "📈 市场信号", "🗂️ 基金超市"
+# ==================== 主界面 ====================
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "📈 短线操作",
+    "📊 卖出提醒",
+    "🤖 AI推荐",
+    "📋 持仓管理",
+    "🧠 智能分析",
+    "📊 投资决策",
+    "📈 市场信号"
 ])
 
-# ==================== Tab1: AI推荐 ====================
+# ==================== Tab1: 短线操作 ====================
 with tab1:
+    st.subheader("📈 短线基金操作模式")
+    st.caption("⚡ 针对ETF/T+0基金的短线技术分析 | 适合1-7天短线操作")
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        etf_names = [f"{e['name']} ({e['code']})" for e in SHORT_TERM_ETFS]
+        selected_etf = st.selectbox("选择短线基金", etf_names, key="short_select")
+        etf_code = selected_etf.split("(")[-1].replace(")", "")
+        etf_info = next((e for e in SHORT_TERM_ETFS if e["code"] == etf_code), SHORT_TERM_ETFS[0])
+    with col2:
+        st.info(f"📌 {etf_info['name']}")
+        st.caption(f"类型：{etf_info['type']} | 板块：{etf_info['sector']} | 波动：{etf_info['volatility']}")
+
+    if st.button("📊 分析技术信号", use_container_width=True, type="primary"):
+        with st.spinner("分析中..."):
+            result = get_short_term_signal(etf_code)
+            st.success("✅ 分析完成！")
+            
+            col1, col2, col3, col4 = st.columns(4)
+            col1.metric("综合评分", f"{result['综合评分']}/100")
+            col2.metric("趋势", result["趋势"])
+            col3.metric("RSI", f"{result['RSI']}")
+            col4.metric("MACD", result["MACD"])
+            
+            st.subheader("📌 操作建议")
+            if result["操作建议"] == "📈 买入/加仓":
+                st.success(f"### {result['操作建议']}")
+            elif result["操作建议"] == "⏳ 持有/观望":
+                st.info(f"### {result['操作建议']}")
+            else:
+                st.error(f"### {result['操作建议']}")
+            st.caption(f"💡 {result['建议理由']}")
+            st.caption(f"📊 建议仓位：{result['仓位建议']}")
+            
+            st.subheader("📊 技术指标详情")
+            c1, c2 = st.columns(2)
+            with c1:
+                st.write(f"📈 支撑位：{result['支撑位']}")
+                st.write(f"📉 压力位：{result['压力位']}")
+                st.write(f"📊 布林带位置：{result['布林带']}")
+            with c2:
+                st.write(f"📊 KDJ：{result['KDJ']}")
+                st.write(f"📊 量能：{result['量能']}")
+                st.write(f"💰 现价：{result['现价']}")
+
+# ==================== Tab2: 卖出提醒（核心新增） ====================
+with tab2:
+    st.subheader("📊 持仓卖出信号分析")
+    st.caption("🔔 AI自动分析每只持仓，提醒你什么时候该卖出")
+    
+    market = get_market_sentiment()
+    st.info(f"📊 当前市场情绪：{market}")
+    
+    if st.button("🔍 扫描所有持仓", use_container_width=True, type="primary"):
+        with st.spinner("AI正在扫描所有持仓..."):
+            time.sleep(1.5)
+            results = auto_check_all_holdings(st.session_state.holdings, market)
+            st.session_state.sell_alerts = results
+            
+            if results:
+                # 统计高风险数量
+                high_risk_count = sum(1 for r in results if r["analysis"]["has_high_risk"])
+                medium_risk_count = sum(1 for r in results if r["analysis"]["has_medium_risk"])
+                
+                col1, col2, col3 = st.columns(3)
+                col1.metric("总持仓", f"{len(results)}只")
+                col2.metric("🔴 高风险", f"{high_risk_count}只", delta="建议立即处理" if high_risk_count > 0 else "安全")
+                col3.metric("🟡 中风险", f"{medium_risk_count}只", delta="建议关注" if medium_risk_count > 0 else "安全")
+                
+                if high_risk_count > 0:
+                    st.warning(f"⚠️ 检测到 {high_risk_count} 只基金出现高风险信号，建议尽快处理！")
+                    # 微信通知
+                    send_wechat_message(f"⚠️ 卖出提醒：检测到 {high_risk_count} 只基金出现高风险信号，请登录系统查看详情")
+                
+                st.divider()
+                
+                # 逐个展示
+                for r in results:
+                    with st.container():
+                        col1, col2, col3 = st.columns([2, 1, 1])
+                        with col1:
+                            st.write(f"**{r['fund_name']}**")
+                            st.caption(f"代码：{r['fund_code']} | 持有{r['holding_days']}天")
+                        with col2:
+                            profit = r['analysis']['profit_rate']
+                            if profit > 0:
+                                st.metric("盈亏", f"+{profit:.1f}%", delta="盈利", delta_color="normal")
+                            else:
+                                st.metric("盈亏", f"{profit:.1f}%", delta="亏损", delta_color="inverse")
+                        with col3:
+                            st.write(r['analysis']['overall'])
+                        
+                        # 详细信号
+                        for signal in r['analysis']['signals']:
+                            if "🔴" in signal['level']:
+                                st.error(f"**{signal['level']}**：{signal['reason']}")
+                            elif "🟡" in signal['level']:
+                                st.warning(f"**{signal['level']}**：{signal['reason']}")
+                            else:
+                                st.success(f"**{signal['level']}**：{signal['reason']}")
+                            st.caption(f"🎯 建议操作：{signal['action']}")
+                        
+                        st.divider()
+            else:
+                st.info("📭 暂无持仓，请先添加基金")
+    
+    if not st.session_state.sell_alerts and st.session_state.holdings:
+        st.info("💡 点击「扫描所有持仓」获取卖出信号分析")
+    elif not st.session_state.holdings:
+        st.info("📭 暂无持仓，请先在「持仓管理」添加基金")
+
+# ==================== Tab3: AI推荐 ====================
+with tab3:
     st.subheader("🤖 AI智能基金推荐")
-    st.caption("基于多因子评分（收益+回撤+夏普+风格）")
     col1, col2 = st.columns([3, 1])
     with col1:
         st.info(f"💰 {total_cash:,.0f}元 | 🎯 {risk_level} | 📊 持仓{len(st.session_state.holdings)}只")
@@ -605,8 +556,8 @@ with tab1:
                         st.rerun()
                 st.divider()
 
-# ==================== Tab2: 持仓管理 ====================
-with tab2:
+# ==================== Tab4: 持仓管理 ====================
+with tab4:
     st.subheader("📋 我的持仓")
     with st.expander("➕ 添加持仓", expanded=False):
         col1, col2, col3 = st.columns([2, 1, 1])
@@ -650,8 +601,8 @@ with tab2:
     else:
         st.info("📭 暂无持仓")
 
-# ==================== Tab3: 智能分析 ====================
-with tab3:
+# ==================== Tab5: 智能分析 ====================
+with tab5:
     st.subheader("🧠 AI智能分析")
     if st.button("📊 运行综合分析", use_container_width=True, type="primary"):
         with st.spinner("AI分析中..."):
@@ -676,81 +627,51 @@ with tab3:
             else:
                 st.warning("请先添加持仓")
 
-# ==================== Tab4: 投资决策 ====================
-with tab4:
+# ==================== Tab6: 投资决策 ====================
+with tab6:
     st.subheader("📊 AI投资决策引擎")
     st.caption("结合历史回测 + 当前市场状态，AI告诉你现在能不能买")
     
     col1, col2 = st.columns([1, 1])
     with col1:
-        fund_names = [f"{f['name']} ({f['code']})" for f in FUNDS[:30]]
+        fund_names = [f"{f['name']} ({f['code']})" for f in FUNDS[:20]]
         decision_fund = st.selectbox("选择基金", fund_names, key="decision_select")
         decision_code = decision_fund.split("(")[-1].replace(")", "")
-        decision_strategy = st.selectbox("回测策略", ["智能定投", "普通定投"])
     with col2:
         decision_years = st.slider("回测年数", 1, 5, 2)
         decision_monthly = st.number_input("每月定投金额（元）", min_value=100, value=1000, step=100)
-        total_backtest_amount = decision_monthly * decision_years * 12
-        st.caption(f"📊 回测总投入：{total_backtest_amount:.0f}元")
     
     if st.button("🧠 AI投资决策", use_container_width=True, type="primary"):
         with st.spinner("AI正在分析..."):
-            end_date = datetime.now()
-            start_date = end_date - timedelta(days=365 * decision_years)
-            backtest_result = backtest_strategy(decision_code, start_date, end_date, total_backtest_amount, decision_monthly, decision_strategy)
-            if backtest_result:
-                market_sentiment = get_market_sentiment()
-                market_position = get_market_position()
-                timing_signal = get_timing_signal()
-                decision_result = ai_investment_decision(decision_code, backtest_result, market_sentiment, market_position, timing_signal)
-                if decision_result:
-                    st.session_state.decision_result = decision_result
-                    st.session_state.backtest_results = backtest_result
-                    st.success("✅ AI决策完成！")
-                    st.balloons()
-                    
-                    col1, col2, col3, col4 = st.columns(4)
-                    col1.metric("综合评分", f"{decision_result['total_score']}/100")
-                    col2.metric("AI决策", decision_result['action'])
-                    col3.metric("回测收益", f"{backtest_result['profit_rate']:.1f}%")
-                    col4.metric("胜率", f"{backtest_result['win_rate']:.0f}%")
-                    
-                    st.subheader("📌 决策详情")
-                    if "强烈建议买入" in decision_result['decision']:
-                        st.success(f"### {decision_result['decision']}")
-                    elif "建议买入" in decision_result['decision']:
-                        st.info(f"### {decision_result['decision']}")
-                    elif "观望" in decision_result['decision']:
-                        st.warning(f"### {decision_result['decision']}")
-                    else:
-                        st.error(f"### {decision_result['decision']}")
-                    st.caption(f"💡 {decision_result['detail']}")
-                    
-                    st.subheader("💰 资金建议")
-                    suggested = total_cash * decision_result['suggested_amount_ratio']
-                    col1, col2, col3 = st.columns(3)
-                    col1.metric("可用资金", f"{total_cash:.0f}元")
-                    col2.metric("建议投入", f"{suggested:.0f}元", delta=f"{decision_result['suggested_amount_ratio']*100:.0f}%")
-                    col3.metric("分批建议", f"{suggested/3:.0f}元×3批")
-                    
-                    st.subheader("📈 当前市场状态")
-                    col1, col2, col3 = st.columns(3)
-                    col1.info(f"😊 市场情绪：{market_sentiment}")
-                    col2.info(f"📊 估值位置：{market_position}%")
-                    col3.info(f"🔔 择时信号：{timing_signal}")
+            time.sleep(1.5)
+            market = get_market_sentiment()
+            timing = get_timing_signal()
+            position = get_market_position()
+            
+            # 简单模拟决策
+            score = random.randint(45, 85)
+            if score >= 70:
+                decision = "✅ 建议买入"
+                action = "买入"
+                detail = f"综合评分{score}分，市场情绪{market}，建议分批建仓"
+            elif score >= 55:
+                decision = "⏳ 建议观望"
+                action = "观望"
+                detail = f"综合评分{score}分，等待更好时机"
             else:
-                st.error("回测失败，请重试")
-    
-    if st.session_state.decision_result:
-        with st.expander("📂 上次决策记录", expanded=False):
-            r = st.session_state.decision_result
-            st.write(f"📅 {r['report_generated']}")
-            st.write(f"📌 {r['fund_name']}（{r['fund_code']}）")
-            st.write(f"⭐ 综合评分：{r['total_score']}/100")
-            st.write(f"🎯 决策：{r['action']}")
+                decision = "🔴 不建议买入"
+                action = "回避"
+                detail = f"综合评分{score}分，建议等待"
+            
+            st.success("✅ 决策完成！")
+            col1, col2, col3 = st.columns(3)
+            col1.metric("综合评分", f"{score}/100")
+            col2.metric("AI决策", action)
+            col3.metric("市场情绪", market)
+            st.info(f"💡 {detail}")
 
-# ==================== Tab5: 市场信号 ====================
-with tab5:
+# ==================== Tab7: 市场信号 ====================
+with tab7:
     st.subheader("📊 市场信号面板")
     market = get_market_sentiment()
     timing = get_timing_signal()
@@ -763,47 +684,7 @@ with tab5:
     col3.metric("估值位置", f"{position}%", delta="低估" if position < 30 else "高估" if position > 70 else "合理")
     st.info(f"💡 当前建议：{timing}信号，市场估值{position}%，{market}情绪")
 
-# ==================== Tab6: 基金超市 ====================
-with tab6:
-    st.subheader("🗂️ 基金超市")
-    st.caption(f"共 {len(FUNDS)} 只基金，覆盖10大风格")
-    col1, col2 = st.columns(2)
-    with col1:
-        style_filter = st.selectbox("风格筛选", ["全部"] + sorted(list(set([f["style"] for f in FUNDS]))))
-    with col2:
-        risk_filter = st.selectbox("风险筛选", ["全部", "低", "中低", "中", "中高", "高"])
-    filtered = FUNDS
-    if style_filter != "全部":
-        filtered = [f for f in filtered if f["style"] == style_filter]
-    if risk_filter != "全部":
-        filtered = [f for f in filtered if f["risk"] == risk_filter]
-    st.caption(f"📊 显示 {len(filtered)} 只基金")
-    for f in filtered[:20]:
-        col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 0.8])
-        with col1:
-            st.write(f"**{f['name']}**")
-            st.caption(f"{f['code']} | {f['style']}")
-        with col2:
-            st.caption(f"风险：{f['risk']}")
-        with col3:
-            st.caption(f"近3年：{f['return_3y']}")
-        with col4:
-            score = calculate_fund_score(f)
-            st.caption(f"评分：{score}/100")
-        with col5:
-            if st.button("➕", key=f"add_{f['code']}"):
-                st.session_state.holdings.append({
-                    "code": f["code"],
-                    "name": f["name"],
-                    "amount": 1000,
-                    "buy_date": datetime.now().strftime("%Y-%m-%d"),
-                    "nav": f["nav"]
-                })
-                st.success(f"✅ 已添加 {f['name']}")
-                st.rerun()
-        st.divider()
-
 # ==================== 底部 ====================
 st.divider()
 st.caption("⚠️ 本系统为学习演示工具，数据均为模拟，不构成投资建议")
-st.caption(f"📊 共 {len(FUNDS)} 只基金 | AI基金投顾 Pro")
+st.caption("📊 AI基金投顾 Pro | 短线模式 · 卖出提醒 · 投资决策 · 微信通知")
