@@ -20,14 +20,18 @@ st.set_page_config(
 st.title("🤖 AI基金投顾 终极版")
 st.caption("📊 200+基金 · 短线模式 · 卖出提醒 · 投资决策 · 微信通知")
 
-# ==================== 微信通知配置 ====================
-WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=你的key"
+# ==================== 微信通知配置（已配置好你的Webhook） ====================
+WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=9f94cf9d-5c12-4ad3-a2d2-5ef15afc17bb"
 
 def send_wechat_message(content):
-    if not WEBHOOK_URL or "你的key" in WEBHOOK_URL:
-        return False, "⚠️ 请先配置 Webhook 地址"
+    """发送消息到企业微信群"""
+    if not WEBHOOK_URL:
+        return False, "⚠️ 未配置 Webhook 地址"
     try:
-        data = {"msgtype": "text", "text": {"content": content[:2000]}}
+        data = {
+            "msgtype": "text",
+            "text": {"content": content[:2000]}
+        }
         response = requests.post(WEBHOOK_URL, json=data, timeout=5)
         if response.status_code == 200:
             return True, "✅ 微信通知已发送"
