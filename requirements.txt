@@ -1,7 +1,5 @@
-akshare==1.16.78
-streamlit==1.41.1
-pandas==2.2.3
-numpy==2.2.4
-plotly==6.0.0
-requests==2.32.3
-protobuf==3.20.3
+streamlit
+pandas
+numpy
+plotly
+requests
