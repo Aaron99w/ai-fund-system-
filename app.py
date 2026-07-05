@@ -64,12 +64,10 @@ SHORT_TERM_ETFS = [
 
 # ==================== 卖出信号分析函数 ====================
 def analyze_sell_signals(holding, current_price, buy_price, market_sentiment, holding_days):
-    """分析卖出信号"""
     signals = []
     profit_rate = (current_price - buy_price) / buy_price * 100
     is_etf = any(e["code"] == holding["code"] for e in SHORT_TERM_ETFS)
     
-    # ===== 1. 止盈信号 =====
     if profit_rate >= 15:
         signals.append({
             "level": "🔴 强烈卖出",
@@ -92,7 +90,6 @@ def analyze_sell_signals(holding, current_price, buy_price, market_sentiment, ho
             "urgency": "低"
         })
     
-    # ===== 2. 止损信号 =====
     if profit_rate <= -8:
         signals.append({
             "level": "🔴 止损提醒",
@@ -108,7 +105,6 @@ def analyze_sell_signals(holding, current_price, buy_price, market_sentiment, ho
             "urgency": "中"
         })
     
-    # ===== 3. 持有时间信号（短线） =====
     if is_etf and holding_days >= 7:
         signals.append({
             "level": "🟡 短线提醒",
@@ -117,7 +113,6 @@ def analyze_sell_signals(holding, current_price, buy_price, market_sentiment, ho
             "urgency": "中"
         })
     
-    # ===== 4. 市场情绪信号 =====
     if market_sentiment == "悲观" and profit_rate > 0:
         signals.append({
             "level": "🟡 市场预警",
@@ -133,7 +128,6 @@ def analyze_sell_signals(holding, current_price, buy_price, market_sentiment, ho
             "urgency": "低"
         })
     
-    # ===== 5. 高位信号（估值过高） =====
     if holding.get("position", 0) > 70 and profit_rate > 5:
         signals.append({
             "level": "🟡 估值提醒",
@@ -142,7 +136,6 @@ def analyze_sell_signals(holding, current_price, buy_price, market_sentiment, ho
             "urgency": "中"
         })
     
-    # ===== 6. 综合判断 =====
     if not signals:
         signals.append({
             "level": "🟢 正常持有",
@@ -151,11 +144,9 @@ def analyze_sell_signals(holding, current_price, buy_price, market_sentiment, ho
             "urgency": "低"
         })
     
-    # 检查是否有高风险信号
     has_high_risk = any(s["urgency"] == "高" for s in signals)
     has_medium_risk = any(s["urgency"] == "中" for s in signals)
     
-    # 生成综合建议
     if has_high_risk:
         overall = "🔴 建议立即卖出"
         summary = "检测到高风险信号，建议尽快操作"
@@ -175,28 +166,19 @@ def analyze_sell_signals(holding, current_price, buy_price, market_sentiment, ho
         "has_medium_risk": has_medium_risk
     }
 
-# ==================== 自动分析提醒函数 ====================
 def auto_check_all_holdings(holdings, market_sentiment):
-    """自动检查所有持仓的卖出信号"""
     if not holdings:
         return []
-    
     results = []
     for h in holdings:
-        # 计算持有天数
         try:
             buy_date = datetime.strptime(h["buy_date"], "%Y-%m-%d")
             holding_days = (datetime.now() - buy_date).days
         except:
             holding_days = 0
-        
-        # 模拟当前价格
         current_price = h.get("nav", 1.0) * random.uniform(0.88, 1.15)
         buy_price = h.get("nav", 1.0)
-        position = h.get("position", random.randint(20, 80))
-        
-        h["position"] = position
-        
+        h["position"] = random.randint(20, 80)
         result = analyze_sell_signals(h, current_price, buy_price, market_sentiment, holding_days)
         results.append({
             "fund_name": h["name"],
@@ -206,10 +188,8 @@ def auto_check_all_holdings(holdings, market_sentiment):
             "holding_days": holding_days,
             "analysis": result
         })
-    
     return results
 
-# ==================== 短线技术分析 ====================
 def get_short_term_signal(etf_code):
     signals = {
         "趋势": random.choice(["多头排列", "空头排列", "震荡整理"]),
@@ -257,7 +237,7 @@ def get_short_term_signal(etf_code):
         signals["仓位建议"] = "10-30%"
     return signals
 
-# ==================== 长线基金库（精简版） ====================
+# ==================== 核心长线基金池 ====================
 FUNDS = [
     {"name": "前海开源人工智能混合", "code": "001986", "style": "科技", "nav": 2.85, "risk": "高", "return_1y": "+18.5%", "return_3y": "+42.5%", "max_dd": "-25.3%", "sharpe": 0.85},
     {"name": "万家人工智能混合", "code": "006281", "style": "科技", "nav": 1.92, "risk": "高", "return_1y": "+15.2%", "return_3y": "+38.2%", "max_dd": "-28.1%", "sharpe": 0.78},
@@ -281,7 +261,6 @@ FUNDS = [
     {"name": "工银瑞信金融地产混合", "code": "000251", "style": "金融", "nav": 2.34, "risk": "中低", "return_1y": "+6.8%", "return_3y": "+16.8%", "max_dd": "-12.5%", "sharpe": 0.56},
 ]
 
-# ==================== 辅助函数 ====================
 def get_market_sentiment():
     sentiments = ["乐观", "中性", "谨慎", "悲观"]
     weights = [0.25, 0.40, 0.25, 0.10]
@@ -321,6 +300,55 @@ def ai_recommend(total_amount, risk_preference="中", existing_holdings=[], coun
     recommendations = []
     for f in available[:count]:
         total_score = f["ai_score"] + random.randint(-5, 5)
+        
+        # ===== 详细推荐理由 =====
+        reason_parts = []
+        ret_3y_num = float(f["return_3y"].replace("%", "").replace("+", ""))
+        if ret_3y_num > 30:
+            reason_parts.append(f"🔥 近3年涨幅{ret_3y_num:.0f}%，业绩亮眼")
+        elif ret_3y_num > 15:
+            reason_parts.append(f"📈 近3年涨幅{ret_3y_num:.0f}%，表现稳健")
+        else:
+            reason_parts.append(f"📊 近3年涨幅{ret_3y_num:.0f}%，有待观察")
+        
+        dd_num = float(f["max_dd"].replace("%", "").replace("-", ""))
+        if dd_num < 20:
+            reason_parts.append(f"🛡️ 最大回撤{dd_num:.0f}%，风控较好")
+        elif dd_num < 30:
+            reason_parts.append(f"⚖️ 最大回撤{dd_num:.0f}%，波动适中")
+        else:
+            reason_parts.append(f"📉 最大回撤{dd_num:.0f}%，波动较大需注意")
+        
+        if f["sharpe"] > 0.8:
+            reason_parts.append(f"⭐ 夏普比率{f['sharpe']:.2f}，性价比高")
+        elif f["sharpe"] > 0.5:
+            reason_parts.append(f"💡 夏普比率{f['sharpe']:.2f}，性价比较好")
+        else:
+            reason_parts.append(f"📊 夏普比率{f['sharpe']:.2f}，性价比一般")
+        
+        style_advice = {
+            "科技": "科技赛道成长性强，适合进取型投资者",
+            "消费": "消费行业长期稳健，适合价值投资者",
+            "医药": "医药赛道刚需强劲，长期配置价值高",
+            "均衡": "均衡配置分散风险，适合稳健型投资者",
+            "芯片": "芯片国产替代空间大，高弹性高风险",
+            "新能源": "新能源是长期趋势，政策持续利好",
+            "港股": "港股估值偏低，有估值修复机会",
+            "军工": "军工行业景气度提升，主题投资机会",
+            "金融": "金融板块股息率高，适合保守型投资者"
+        }
+        reason_parts.append(f"📌 {style_advice.get(f['style'], f'{f['style']}风格适合当前配置')}")
+        
+        if total_score > 80:
+            advice = "🌟 综合表现优秀，建议重点配置"
+        elif total_score > 65:
+            advice = "✅ 综合表现良好，建议适量配置"
+        elif total_score > 50:
+            advice = "📊 综合表现一般，建议小仓位参与"
+        else:
+            advice = "⚠️ 综合表现偏弱，建议谨慎参与"
+        reason_parts.append(f"💡 {advice}")
+        
         recommendations.append({
             "name": f["name"],
             "code": f["code"],
@@ -331,7 +359,7 @@ def ai_recommend(total_amount, risk_preference="中", existing_holdings=[], coun
             "return_3y": f["return_3y"],
             "max_dd": f["max_dd"],
             "sharpe": f["sharpe"],
-            "reason": f"📈 {f['return_3y']} | 📉 {f['max_dd']} | ⭐ {f['sharpe']:.2f}"
+            "reason": " | ".join(reason_parts)
         })
     return recommendations
 
@@ -452,7 +480,7 @@ with tab1:
                 st.write(f"📊 量能：{result['量能']}")
                 st.write(f"💰 现价：{result['现价']}")
 
-# ==================== Tab2: 卖出提醒（核心新增） ====================
+# ==================== Tab2: 卖出提醒 ====================
 with tab2:
     st.subheader("📊 持仓卖出信号分析")
     st.caption("🔔 AI自动分析每只持仓，提醒你什么时候该卖出")
@@ -467,7 +495,6 @@ with tab2:
             st.session_state.sell_alerts = results
             
             if results:
-                # 统计高风险数量
                 high_risk_count = sum(1 for r in results if r["analysis"]["has_high_risk"])
                 medium_risk_count = sum(1 for r in results if r["analysis"]["has_medium_risk"])
                 
@@ -478,12 +505,10 @@ with tab2:
                 
                 if high_risk_count > 0:
                     st.warning(f"⚠️ 检测到 {high_risk_count} 只基金出现高风险信号，建议尽快处理！")
-                    # 微信通知
                     send_wechat_message(f"⚠️ 卖出提醒：检测到 {high_risk_count} 只基金出现高风险信号，请登录系统查看详情")
                 
                 st.divider()
                 
-                # 逐个展示
                 for r in results:
                     with st.container():
                         col1, col2, col3 = st.columns([2, 1, 1])
@@ -499,7 +524,6 @@ with tab2:
                         with col3:
                             st.write(r['analysis']['overall'])
                         
-                        # 详细信号
                         for signal in r['analysis']['signals']:
                             if "🔴" in signal['level']:
                                 st.error(f"**{signal['level']}**：{signal['reason']}")
@@ -521,6 +545,8 @@ with tab2:
 # ==================== Tab3: AI推荐 ====================
 with tab3:
     st.subheader("🤖 AI智能基金推荐")
+    st.caption("📊 基于多因子评分（收益+回撤+夏普+风格）")
+    
     col1, col2 = st.columns([3, 1])
     with col1:
         st.info(f"💰 {total_cash:,.0f}元 | 🎯 {risk_level} | 📊 持仓{len(st.session_state.holdings)}只")
@@ -530,6 +556,7 @@ with tab3:
                 recommendations = ai_recommend(total_cash, risk_pref, st.session_state.holdings)
                 st.session_state.recommendations = recommendations
                 st.success("✅ 分析完成！")
+    
     if st.session_state.recommendations:
         for i, rec in enumerate(st.session_state.recommendations, 1):
             with st.container():
@@ -554,7 +581,13 @@ with tab3:
                         })
                         st.success(f"✅ 已添加 {rec['name']}")
                         st.rerun()
+                
+                # ===== 显示完整推荐理由 =====
+                st.caption(f"💡 {rec['reason']}")
                 st.divider()
+    
+    if not st.session_state.recommendations:
+        st.info("💡 点击「AI分析」获取基金推荐")
 
 # ==================== Tab4: 持仓管理 ====================
 with tab4:
@@ -580,6 +613,7 @@ with tab4:
             })
             st.success(f"✅ 已添加 {fund['name']}")
             st.rerun()
+    
     if st.session_state.holdings:
         df = pd.DataFrame(st.session_state.holdings)
         df["当前净值"] = df["nav"] * random.uniform(0.88, 1.15)
@@ -587,11 +621,16 @@ with tab4:
         df["盈亏"] = df["市值"] - df["amount"]
         df["盈亏率%"] = (df["盈亏"] / df["amount"]) * 100
         st.dataframe(df[["name", "amount", "buy_date", "市值", "盈亏", "盈亏率%"]],
-                     column_config={"name": "基金", "amount": "投入", "buy_date": "日期",
-                                   "市值": st.column_config.NumberColumn(format="%.2f元"),
-                                   "盈亏": st.column_config.NumberColumn(format="%.2f元"),
-                                   "盈亏率%": st.column_config.NumberColumn(format="%.2f%%")},
+                     column_config={
+                         "name": "基金",
+                         "amount": "投入",
+                         "buy_date": "日期",
+                         "市值": st.column_config.NumberColumn(format="%.2f元"),
+                         "盈亏": st.column_config.NumberColumn(format="%.2f元"),
+                         "盈亏率%": st.column_config.NumberColumn(format="%.2f%%")
+                     },
                      use_container_width=True)
+        
         with st.expander("🗑️ 删除持仓", expanded=False):
             idx = st.selectbox("选择要删除的", range(len(st.session_state.holdings)),
                               format_func=lambda i: st.session_state.holdings[i]["name"])
@@ -648,7 +687,6 @@ with tab6:
             timing = get_timing_signal()
             position = get_market_position()
             
-            # 简单模拟决策
             score = random.randint(45, 85)
             if score >= 70:
                 decision = "✅ 建议买入"
