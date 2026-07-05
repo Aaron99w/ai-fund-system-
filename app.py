@@ -8,6 +8,7 @@ import time
 import json
 import requests
 import akshare as ak
+import random
 
 # ==================== 页面设置 ====================
 st.set_page_config(
@@ -39,7 +40,6 @@ def send_wechat_message(content):
 
 @st.cache_data(ttl=300)
 def get_real_fund_nav(fund_code):
-    """获取真实基金净值"""
     try:
         df = ak.fund_open_fund_info_em(symbol=fund_code, indicator="单位净值走势")
         if df.empty:
@@ -52,7 +52,6 @@ def get_real_fund_nav(fund_code):
 
 @st.cache_data(ttl=300)
 def get_real_fund_info(fund_code):
-    """获取真实基金信息"""
     try:
         df = ak.fund_em_fund_info()
         info = df[df['基金代码'] == fund_code]
@@ -64,7 +63,6 @@ def get_real_fund_info(fund_code):
 
 @st.cache_data(ttl=300)
 def get_real_etf_price(etf_code):
-    """获取真实ETF价格"""
     try:
         end_date = datetime.now().strftime("%Y%m%d")
         start_date = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
@@ -80,7 +78,6 @@ def get_real_etf_price(etf_code):
 
 @st.cache_data(ttl=300)
 def get_real_market_index():
-    """获取真实沪深300指数"""
     try:
         end_date = datetime.now().strftime("%Y%m%d")
         start_date = (datetime.now() - timedelta(days=30)).strftime("%Y%m%d")
@@ -94,7 +91,6 @@ def get_real_market_index():
 
 @st.cache_data(ttl=300)
 def get_real_news():
-    """获取真实财经新闻"""
     try:
         df = ak.stock_news_em(symbol="头条")
         if df.empty:
@@ -125,7 +121,6 @@ SHORT_TERM_ETFS = [
 # ==================== 真实数据分析函数 ====================
 
 def analyze_real_fund(fund_code):
-    """分析真实基金数据"""
     df = get_real_fund_nav(fund_code)
     if df is None or df.empty:
         return None
@@ -134,26 +129,21 @@ def analyze_real_fund(fund_code):
     latest_nav = nav.iloc[-1]
     latest_date = df['净值日期'].iloc[-1]
     
-    # 计算收益率
     ret_1m = (nav.iloc[-1] / nav.iloc[-22] - 1) * 100 if len(nav) >= 22 else 0
     ret_3m = (nav.iloc[-1] / nav.iloc[-66] - 1) * 100 if len(nav) >= 66 else 0
     ret_6m = (nav.iloc[-1] / nav.iloc[-132] - 1) * 100 if len(nav) >= 132 else 0
     ret_1y = (nav.iloc[-1] / nav.iloc[-242] - 1) * 100 if len(nav) >= 242 else 0
     
-    # 计算最大回撤
     cummax = nav.cummax()
     drawdown = (nav - cummax) / cummax * 100
     max_drawdown = drawdown.min()
     
-    # 计算波动率
     volatility = nav.pct_change().std() * np.sqrt(252) * 100
     
-    # 计算夏普比率（年化）
     risk_free = 2.5
     returns = nav.pct_change().dropna()
     sharpe = (returns.mean() * 252 - risk_free) / (returns.std() * np.sqrt(252)) if returns.std() > 0 else 0
     
-    # 当前位置（近60日）
     high_60 = nav.tail(60).max()
     low_60 = nav.tail(60).min()
     position = (latest_nav - low_60) / (high_60 - low_60) if high_60 != low_60 else 0.5
@@ -173,7 +163,6 @@ def analyze_real_fund(fund_code):
     }
 
 def analyze_real_etf(etf_code):
-    """分析真实ETF数据"""
     df = get_real_etf_price(etf_code)
     if df is None or df.empty:
         return None
@@ -182,16 +171,13 @@ def analyze_real_etf(etf_code):
     latest = close.iloc[-1]
     latest_date = df['日期'].iloc[-1]
     
-    # 计算收益率
     ret_1m = (close.iloc[-1] / close.iloc[-22] - 1) * 100 if len(close) >= 22 else 0
     ret_3m = (close.iloc[-1] / close.iloc[-66] - 1) * 100 if len(close) >= 66 else 0
     
-    # 计算移动平均线
     ma5 = close.rolling(5).mean().iloc[-1]
     ma20 = close.rolling(20).mean().iloc[-1]
     ma60 = close.rolling(60).mean().iloc[-1]
     
-    # 计算RSI（14日）
     delta = close.diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -199,12 +185,10 @@ def analyze_real_etf(etf_code):
     rsi = 100 - (100 / (1 + rs))
     current_rsi = rsi.iloc[-1] if not rsi.empty else 50
     
-    # 当前位置
     high_60 = close.tail(60).max()
     low_60 = close.tail(60).min()
     position = (latest - low_60) / (high_60 - low_60) if high_60 != low_60 else 0.5
     
-    # 综合评分
     score = 50
     if latest > ma5 > ma20:
         score += 15
@@ -220,7 +204,6 @@ def analyze_real_etf(etf_code):
         score -= 8
     score = max(0, min(100, score))
     
-    # 生成信号
     if score >= 70:
         signal = "📈 买入信号"
         action = "buy"
@@ -251,7 +234,7 @@ def analyze_real_etf(etf_code):
         "历史数据": df[['日期', '收盘']].tail(90).to_dict('records')
     }
 
-# ==================== 基金池（真实数据） ====================
+# ==================== 基金池 ====================
 FUNDS = [
     {"name": "前海开源人工智能混合", "code": "001986", "style": "科技"},
     {"name": "万家人工智能混合", "code": "006281", "style": "科技"},
@@ -276,7 +259,6 @@ FUNDS = [
 ]
 
 def get_market_sentiment():
-    """获取真实市场情绪"""
     try:
         df = get_real_market_index()
         if df is not None and not df.empty:
@@ -437,7 +419,6 @@ with tab3:
         with col3:
             date = st.date_input("日期", datetime.now())
         if st.button("✅ 确认添加", use_container_width=True) and fund:
-            # 获取真实净值
             nav_data = get_real_fund_nav(code)
             nav = nav_data['单位净值'].iloc[-1] if nav_data is not None else 1.0
             st.session_state.holdings.append({
@@ -452,7 +433,6 @@ with tab3:
     
     if st.session_state.holdings:
         df = pd.DataFrame(st.session_state.holdings)
-        # 更新最新净值
         latest_navs = []
         for h in st.session_state.holdings:
             nav_data = get_real_fund_nav(h["code"])
@@ -495,7 +475,6 @@ with tab4:
     col1.metric("市场情绪", f"{emoji} {market}")
     col2.metric("估值位置", f"{position}%")
     
-    # 显示真实指数走势
     st.subheader("📈 沪深300走势")
     df = get_real_market_index()
     if df is not None and not df.empty:
@@ -503,7 +482,6 @@ with tab4:
     else:
         st.info("暂无数据")
     
-    # 显示真实新闻
     st.subheader("📰 财经快讯")
     news = get_real_news()
     if news:
