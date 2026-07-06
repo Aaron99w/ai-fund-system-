@@ -2,9 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
-import time
 import json
 import os
 import requests
@@ -91,20 +89,6 @@ def get_fund_nav_data(code):
         pass
     return generate_simulated_data(code)
 
-def get_stock_data(code):
-    try:
-        import akshare as ak
-        df = ak.stock_zh_a_hist(symbol=code, period="daily", 
-                                start_date=(datetime.now()-timedelta(days=180)).strftime("%Y%m%d"),
-                                end_date=datetime.now().strftime("%Y%m%d"), adjust="qfq")
-        if df is not None and not df.empty:
-            df['日期'] = pd.to_datetime(df['日期'])
-            df = df.sort_values('日期')
-            return df
-    except:
-        pass
-    return generate_simulated_data(code)
-
 def generate_simulated_data(code):
     end_date = datetime.now()
     dates = pd.date_range(end=end_date, periods=180, freq='D')
@@ -121,21 +105,14 @@ def generate_simulated_data(code):
 
 # ==================== AI监控分析 ====================
 def analyze_holding(holding):
-    """分析单个持仓，返回买卖建议"""
     code = holding["code"]
     name = holding["name"]
     buy_price = holding["nav"]
-    buy_date = holding.get("buy_date", datetime.now().strftime("%Y-%m-%d"))
     holding_type = holding.get("type", "ETF")
     
-    # 获取最新价格
     try:
-        if holding_type == "场外基金" or holding_type == "普通基金":
+        if holding_type in ["场外基金", "普通基金"]:
             df = get_fund_nav_data(code)
-        elif holding_type == "ETF":
-            df = get_etf_data(code)
-        elif holding_type == "股票":
-            df = get_stock_data(code)
         else:
             df = get_etf_data(code)
     except:
@@ -148,20 +125,14 @@ def analyze_holding(holding):
     latest_date = df['日期'].iloc[-1]
     profit_rate = (current_price - buy_price) / buy_price * 100
     
-    # 计算技术指标
     close = df['收盘'].values
     if len(close) >= 20:
         ma20 = pd.Series(close).rolling(20).mean().values[-1]
         ma60 = pd.Series(close).rolling(60).mean().values[-1]
-        above_ma20 = current_price > ma20
-        above_ma60 = current_price > ma60
     else:
         ma20 = current_price
         ma60 = current_price
-        above_ma20 = True
-        above_ma60 = True
     
-    # 计算RSI
     if len(close) >= 14:
         delta = pd.Series(close).diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -172,41 +143,28 @@ def analyze_holding(holding):
     else:
         current_rsi = 50
     
-    # ===== 卖出信号判断 =====
     sell_signals = []
     buy_signals = []
-    hold_status = "持有"
     
-    # 1. 止盈信号（盈利 >= 10%）
     if profit_rate >= 10:
         sell_signals.append(f"🎯 已达止盈线（+{profit_rate:.1f}%），建议分批止盈")
     elif profit_rate >= 7:
-        sell_signals.append(f"📈 接近止盈线（+{profit_rate:.1f}%），可考虑部分止盈")
+        sell_signals.append(f"📈 接近止盈线（+{profit_rate:.1f}%）")
     
-    # 2. 止损信号（亏损 >= -5%）
     if profit_rate <= -5:
         sell_signals.append(f"⚠️ 触发止损线（{profit_rate:.1f}%），建议止损离场")
     elif profit_rate <= -3:
-        sell_signals.append(f"📉 接近止损线（{profit_rate:.1f}%），密切关注")
+        sell_signals.append(f"📉 接近止损线（{profit_rate:.1f}%）")
     
-    # 3. 跌破均线信号
-    if not above_ma20 and profit_rate > 0:
-        sell_signals.append(f"📊 跌破20日均线，趋势转弱")
-    if not above_ma60 and profit_rate > 0:
-        sell_signals.append(f"📊 跌破60日均线，中期趋势转弱")
+    if not pd.isna(ma20) and current_price < ma20 and profit_rate > 0:
+        sell_signals.append("📊 跌破20日均线")
     
-    # 4. RSI超买信号
     if current_rsi > 70 and profit_rate > 3:
-        sell_signals.append(f"📊 RSI={current_rsi:.0f}，超买区，短期回调风险")
+        sell_signals.append(f"📊 RSI={current_rsi:.0f}，超买区")
     
-    # 5. 买入信号（价格低于均线且RSI超卖）
     if current_price < ma20 and current_rsi < 35 and profit_rate < 0:
-        buy_signals.append(f"📈 RSI={current_rsi:.0f}超卖，价格低于均线，可考虑补仓")
+        buy_signals.append(f"📈 RSI超卖，可考虑补仓")
     
-    if current_price < ma60 and current_rsi < 30 and profit_rate < -5:
-        buy_signals.append(f"📈 深度超卖，可考虑加仓摊低成本")
-    
-    # 综合判断
     if sell_signals:
         action = "卖出"
         priority = "高" if any("止盈" in s or "止损" in s for s in sell_signals) else "中"
@@ -223,13 +181,16 @@ def analyze_holding(holding):
         advice = f"📊 当前盈亏{profit_rate:.1f}%，建议继续持有"
         all_signals = [advice]
     
+    if action == "卖出" and priority == "高":
+        msg = f"🔴 {name} 卖出提醒\n盈亏：{profit_rate:.1f}%\n建议：{advice}"
+        send_wechat_message(msg)
+    
     return {
         "code": code,
         "name": name,
         "buy_price": buy_price,
         "current_price": current_price,
         "profit_rate": profit_rate,
-        "latest_date": latest_date.strftime("%Y-%m-%d"),
         "ma20": ma20,
         "ma60": ma60,
         "rsi": current_rsi,
@@ -237,51 +198,25 @@ def analyze_holding(holding):
         "priority": priority,
         "advice": advice,
         "all_signals": all_signals,
-        "hold_status": hold_status,
-        "buy_date": buy_date
+        "buy_date": holding.get("buy_date", "")
     }
 
 def auto_monitor_all_holdings():
-    """自动监控所有持仓"""
     holdings = load_holdings()
     if not holdings:
         return []
-    
     results = []
     for h in holdings:
         result = analyze_holding(h)
         if result:
             results.append(result)
-            
-            # 如果有卖出信号，发送微信通知
-            if result["action"] == "卖出" and result["priority"] == "高":
-                msg = f"🔴 {result['name']} 卖出提醒\n"
-                msg += f"买入价：{result['buy_price']:.3f}\n"
-                msg += f"现价：{result['current_price']:.3f}\n"
-                msg += f"盈亏：{result['profit_rate']:.1f}%\n"
-                msg += f"建议：{result['advice']}"
-                send_wechat_message(msg)
-            
-            # 如果是买入信号，也发送通知
-            if result["action"] == "买入":
-                msg = f"🟢 {result['name']} 补仓提醒\n"
-                msg += f"现价：{result['current_price']:.3f}\n"
-                msg += f"盈亏：{result['profit_rate']:.1f}%\n"
-                msg += f"建议：{result['advice']}"
-                send_wechat_message(msg)
-    
-    # 保存监控日志
-    log = {
-        "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "results": results
-    }
-    monitor_logs = load_monitor_log()
-    monitor_logs.append(log)
-    save_monitor_log(monitor_logs[-50:])  # 只保留最近50条
-    
+    log = {"time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "results": results}
+    logs = load_monitor_log()
+    logs.append(log)
+    save_monitor_log(logs[-50:])
     return results
 
-# ==================== FUND_POOLS ====================
+# ==================== 基金池 ====================
 FUND_POOLS = {
     "场外基金": {
         "description": "适合长期定投，由基金经理主动管理",
@@ -328,7 +263,6 @@ FUND_POOLS = {
     },
 }
 
-# ==================== AI推荐函数 ====================
 def ai_recommend_by_category(category, total_amount, risk_preference="中", count=5):
     pool = FUND_POOLS.get(category, FUND_POOLS["场外基金"])
     available = pool["list"]
@@ -354,8 +288,6 @@ def ai_recommend_by_category(category, total_amount, risk_preference="中", coun
     return sorted(recommendations, key=lambda x: x["score"], reverse=True)
 
 # ==================== 初始化 ====================
-if "holdings" not in st.session_state:
-    st.session_state.holdings = load_holdings()
 if "total_cash" not in st.session_state:
     st.session_state.total_cash = 10000
 if "monitor_results" not in st.session_state:
@@ -368,8 +300,9 @@ with st.sidebar:
     st.session_state.total_cash = total_cash
     
     st.divider()
-    st.metric("持仓数量", f"{len(load_holdings())} 只")
-    total_cost = sum(h.get("amount", 0) for h in load_holdings())
+    holdings = load_holdings()
+    st.metric("持仓数量", f"{len(holdings)} 只")
+    total_cost = sum(h.get("amount", 0) for h in holdings)
     st.metric("已投入", f"{total_cost:.0f} 元")
     
     st.divider()
@@ -390,54 +323,65 @@ tab0, tab1, tab2, tab3, tab4, tab5 = st.tabs([
 # ==================== Tab0: AI推荐 ====================
 with tab0:
     st.subheader("🤖 AI智能推荐")
-    st.caption("选择类别后，AI从该类别中精选推荐最适合你的标的")
     
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
-        category_options = list(FUND_POOLS.keys())
-        selected_category = st.selectbox("选择推荐类别", category_options)
+        selected_category = st.selectbox("选择推荐类别", list(FUND_POOLS.keys()))
     with col2:
         risk_level = st.selectbox("风险偏好", ["低", "中", "高"], index=1)
     with col3:
-        recommend_count = st.selectbox("推荐数量", [3, 5, 8, 10], index=1)
+        recommend_count = st.selectbox("推荐数量", [3, 5, 8], index=1)
     
-    st.info(f"📌 {selected_category}：{FUND_POOLS[selected_category]['description']}")
+    st.info(f"📌 {FUND_POOLS[selected_category]['description']}")
     
     if st.button("🔍 AI分析推荐", use_container_width=True, type="primary"):
-        with st.spinner(f"AI正在分析 {selected_category}..."):
+        with st.spinner(f"AI正在分析..."):
             recommendations = ai_recommend_by_category(selected_category, total_cash, risk_level, recommend_count)
-            if recommendations:
-                st.success(f"✅ AI分析完成！共推荐 {len(recommendations)} 只")
-                for i, rec in enumerate(recommendations, 1):
-                    with st.container():
-                        col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
-                        with col1:
-                            st.write(f"**{i}. {rec['name']}**")
-                            st.caption(f"{rec['code']} | {rec.get('style', '')} | 风险：{rec.get('risk', '中')}")
-                        with col2:
-                            st.metric("AI评分", f"{rec['score']}/100")
-                        with col3:
-                            st.metric("建议投入", f"{rec['suggest_amount']:.0f}元")
-                        with col4:
-                            if st.button(f"📥 买入", key=f"buy_ai_{rec['code']}_{i}"):
-                                holdings = load_holdings()
-                                holdings.append({
-                                    "code": rec["code"],
-                                    "name": rec["name"],
-                                    "amount": rec["suggest_amount"],
-                                    "buy_date": datetime.now().strftime("%Y-%m-%d"),
-                                    "nav": random.uniform(1.0, 4.0),
-                                    "type": selected_category
-                                })
-                                save_holdings(holdings)
-                                st.success(f"✅ 已添加 {rec['name']}，开始AI监控")
-                                st.rerun()
-                        st.caption(f"💡 {rec['reason']}")
-                        st.divider()
-            else:
-                st.warning("⚠️ 没有匹配的标的，请调整风险偏好")
+            st.session_state.recommendations = recommendations
+            st.rerun()
+    
+    if "recommendations" in st.session_state and st.session_state.recommendations:
+        recs = st.session_state.recommendations
+        st.success(f"✅ 共推荐 {len(recs)} 只")
+        
+        for i, rec in enumerate(recs):
+            with st.container():
+                col1, col2, col3, col4 = st.columns([2.5, 1, 1, 1])
+                with col1:
+                    st.write(f"**{i+1}. {rec['name']}**")
+                    st.caption(f"{rec['code']} | {rec.get('style', '')} | 风险：{rec.get('risk', '中')}")
+                with col2:
+                    st.metric("评分", f"{rec['score']}/100")
+                with col3:
+                    st.caption(f"建议投入")
+                    st.caption(f"**{rec['suggest_amount']:.0f}元**")
+                with col4:
+                    # 使用唯一key来区分每个按钮
+                    btn_key = f"buy_{rec['code']}_{i}_{datetime.now().strftime('%Y%m%d%H%M%S')}"
+                    if st.button("📥 买入", key=btn_key, use_container_width=True):
+                        current_holdings = load_holdings()
+                        # 检查是否已持有
+                        existing = [h for h in current_holdings if h["code"] == rec["code"]]
+                        if existing:
+                            st.warning(f"⚠️ 已持有 {rec['name']}，请勿重复买入")
+                        else:
+                            current_holdings.append({
+                                "code": rec["code"],
+                                "name": rec["name"],
+                                "amount": rec["suggest_amount"],
+                                "buy_date": datetime.now().strftime("%Y-%m-%d"),
+                                "nav": random.uniform(1.0, 4.0),
+                                "type": selected_category
+                            })
+                            save_holdings(current_holdings)
+                            st.success(f"✅ 已买入 {rec['name']}，金额 {rec['suggest_amount']:.0f}元")
+                            send_wechat_message(f"✅ 已买入 {rec['name']}\n金额：{rec['suggest_amount']:.0f}元")
+                            st.rerun()
+                
+                st.caption(f"💡 {rec['reason']}")
+                st.divider()
 
-# ==================== Tab1: 持仓监控（核心） ====================
+# ==================== Tab1: 持仓监控 ====================
 with tab1:
     st.subheader("📊 AI实时持仓监控")
     st.caption("🔔 自动分析每只持仓，实时检测买卖信号")
@@ -445,7 +389,7 @@ with tab1:
     col1, col2 = st.columns([2, 1])
     with col1:
         if st.button("🔍 扫描所有持仓", use_container_width=True, type="primary"):
-            with st.spinner("AI正在扫描所有持仓..."):
+            with st.spinner("AI正在扫描..."):
                 results = auto_monitor_all_holdings()
                 st.session_state.monitor_results = results
                 st.success(f"✅ 扫描完成！共分析 {len(results)} 只持仓")
@@ -453,35 +397,32 @@ with tab1:
     with col2:
         st.caption("💡 点击扫描获取最新信号")
     
-    # 显示监控结果
     results = st.session_state.monitor_results if st.session_state.monitor_results else auto_monitor_all_holdings()
     
     if results:
-        # 统计
         sell_count = sum(1 for r in results if r["action"] == "卖出")
         buy_count = sum(1 for r in results if r["action"] == "买入")
         hold_count = sum(1 for r in results if r["action"] == "持有")
         
         col1, col2, col3 = st.columns(3)
-        col1.metric("🔴 卖出信号", f"{sell_count} 只", delta="需处理" if sell_count > 0 else "安全")
-        col2.metric("🟢 买入信号", f"{buy_count} 只", delta="可补仓" if buy_count > 0 else "无需操作")
+        col1.metric("🔴 卖出信号", f"{sell_count} 只")
+        col2.metric("🟢 买入信号", f"{buy_count} 只")
         col3.metric("🟡 持有", f"{hold_count} 只")
         
         st.divider()
         
-        # 逐个显示
         for r in results:
             with st.container():
                 col1, col2, col3, col4 = st.columns([2, 1, 1, 1.2])
                 with col1:
                     st.write(f"**{r['name']}**")
-                    st.caption(f"买入价：{r['buy_price']:.3f} | 现价：{r['current_price']:.3f}")
+                    st.caption(f"买入：{r['buy_price']:.3f} | 现价：{r['current_price']:.3f}")
                 with col2:
                     profit = r['profit_rate']
                     if profit > 0:
-                        st.metric("盈亏", f"+{profit:.1f}%", delta="盈利", delta_color="normal")
+                        st.metric("盈亏", f"+{profit:.1f}%")
                     else:
-                        st.metric("盈亏", f"{profit:.1f}%", delta="亏损", delta_color="inverse")
+                        st.metric("盈亏", f"{profit:.1f}%")
                 with col3:
                     if r['action'] == "卖出":
                         st.error(f"🔴 {r['action']}")
@@ -491,20 +432,11 @@ with tab1:
                         st.info(f"🟡 {r['action']}")
                 with col4:
                     st.caption(f"RSI：{r['rsi']:.0f}")
-                    st.caption(f"MA20：{r['ma20']:.3f}")
                 
-                # 显示信号详情
                 if r['action'] != "持有":
                     st.warning(f"💡 {r['advice']}")
                 else:
                     st.info(f"💡 {r['advice']}")
-                
-                # 显示所有信号
-                if len(r['all_signals']) > 1:
-                    with st.expander("📋 详细信号"):
-                        for s in r['all_signals']:
-                            st.write(f"• {s}")
-                
                 st.divider()
     else:
         st.info("📭 暂无持仓，请先通过AI推荐买入")
@@ -516,13 +448,11 @@ with tab2:
     holdings = load_holdings()
     if holdings:
         total_cost = sum(h["amount"] for h in holdings)
-        
-        # 更新当前市值
         total_value = 0
         details = []
         for h in holdings:
             try:
-                if h.get("type") == "场外基金" or h.get("type") == "普通基金":
+                if h.get("type") in ["场外基金", "普通基金"]:
                     df = get_fund_nav_data(h["code"])
                 else:
                     df = get_etf_data(h["code"])
@@ -531,20 +461,11 @@ with tab2:
                     value = (h["amount"] / h["nav"]) * current
                     total_value += value
                     details.append({
-                        "name": h["name"],
-                        "投入": h["amount"],
-                        "市值": value,
-                        "盈亏": value - h["amount"],
-                        "盈亏率": (value - h["amount"]) / h["amount"] * 100
-                    })
-                else:
-                    total_value += h["amount"]
-                    details.append({
-                        "name": h["name"],
-                        "投入": h["amount"],
-                        "市值": h["amount"],
-                        "盈亏": 0,
-                        "盈亏率": 0
+                        "名称": h["name"],
+                        "投入": f"{h['amount']:.0f}",
+                        "市值": f"{value:.0f}",
+                        "盈亏": f"{value - h['amount']:.0f}",
+                        "盈亏率": f"{(value - h['amount']) / h['amount'] * 100:.1f}%"
                     })
             except:
                 total_value += h["amount"]
@@ -558,8 +479,7 @@ with tab2:
         col3.metric("总盈亏", f"{profit:.0f}元", delta=f"{profit_rate:.1f}%")
         
         if details:
-            df_details = pd.DataFrame(details)
-            st.dataframe(df_details, use_container_width=True)
+            st.dataframe(pd.DataFrame(details), use_container_width=True)
     else:
         st.info("📭 暂无持仓")
 
@@ -573,7 +493,7 @@ with tab3:
             col1, col2, col3, col4 = st.columns([2, 1, 1, 0.8])
             with col1:
                 st.write(f"**{h['name']}**")
-                st.caption(f"买入价：{h.get('nav', 0):.3f} | {h.get('type', 'ETF')}")
+                st.caption(f"买入价：{h.get('nav', 0):.3f}")
             with col2:
                 st.caption(f"金额：{h.get('amount', 0):.0f}元")
             with col3:
@@ -594,7 +514,7 @@ with tab3:
 # ==================== Tab4: 市场状态 ====================
 with tab4:
     st.subheader("📊 市场状态")
-    st.info("📌 当前市场状态")
+    st.info("📌 当前市场状态（模拟数据）")
     col1, col2 = st.columns(2)
     col1.metric("市场情绪", "中性")
     col2.metric("估值位置", "合理")
@@ -616,5 +536,4 @@ with tab5:
 
 # ==================== 底部 ====================
 st.divider()
-st.caption("⚠️ 本系统为学习演示工具，数据来自akshare开源接口，不构成投资建议")
-st.caption("📊 全品种分析系统 | AI推荐 · 实时监控 · 自动分析 · 买卖提醒")
+st.caption("⚠️ 本系统为学习演示工具，不构成投资建议")
