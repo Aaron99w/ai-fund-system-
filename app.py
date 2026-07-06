@@ -33,7 +33,7 @@ def load_holdings():
 
 def save_holdings(holdings):
     with open(HOLDINGS_FILE, "w", encoding="utf-8") as f:
-        json.dump(holdings, f, ensure_ascii=False, indent=2)
+        json.dump(holdings, f, ensure_ascii=False, indent=2, default=str)
 
 def load_monitor_log():
     if os.path.exists(MONITOR_FILE):
@@ -50,25 +50,18 @@ def save_monitor_log(log):
 
 # ==================== 判断交易时间 ====================
 def is_trading_time():
-    """判断当前是否在A股交易时间（9:30-15:00）"""
     now = datetime.now()
-    # 周一至周五 (周一=0, 周日=6)
     if now.weekday() >= 5:
         return False
-    # 9:30-11:30 和 13:00-15:00
     hour = now.hour
     minute = now.minute
     if hour == 9 and minute >= 30:
         return True
     if 10 <= hour <= 11:
         return True
-    if hour == 12:
-        return False
     if hour == 13:
         return True
     if 14 <= hour < 15:
-        return True
-    if hour == 15 and minute == 0:
         return True
     return False
 
@@ -78,8 +71,9 @@ def get_data_label():
     else:
         return "🔵 收盘价（非交易时间）"
 
-# ==================== 数据获取 ====================
-def get_fund_data(code):
+# ==================== 真实数据获取 ====================
+def get_fund_real_data(code):
+    """获取真实基金净值数据"""
     try:
         import akshare as ak
         df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
@@ -87,25 +81,14 @@ def get_fund_data(code):
             df['净值日期'] = pd.to_datetime(df['净值日期'])
             df = df.sort_values('净值日期')
             df = df.rename(columns={'净值日期': '日期', '单位净值': '收盘'})
-            # 转换为Python原生类型
             df['收盘'] = df['收盘'].astype(float)
             return df
     except:
         pass
-    # 模拟数据
-    dates = pd.date_range(end=datetime.now(), periods=180, freq='D')
-    random.seed(hash(code) % 100)
-    base = random.uniform(1.0, 3.0)
-    prices = [base]
-    for i in range(179):
-        change = np.random.normal(0.0002, 0.018)
-        prices.append(prices[-1] * (1 + change))
-    df = pd.DataFrame({'日期': dates, '收盘': prices})
-    df['日期'] = pd.to_datetime(df['日期'])
-    df['收盘'] = df['收盘'].astype(float)
-    return df.sort_values('日期')
+    return None
 
-def get_etf_data(code):
+def get_etf_real_data(code):
+    """获取真实ETF数据"""
     try:
         import akshare as ak
         end = datetime.now().strftime("%Y%m%d")
@@ -118,17 +101,37 @@ def get_etf_data(code):
             return df
     except:
         pass
+    return None
+
+def get_fund_data(code, holding_type="ETF"):
+    """获取数据，优先真实数据，失败用模拟"""
+    if holding_type in ["场外基金", "普通基金"]:
+        df = get_fund_real_data(code)
+    else:
+        df = get_etf_real_data(code)
+    
+    if df is not None:
+        return df, "真实数据"
+    
+    # 模拟数据（提示用户）
     dates = pd.date_range(end=datetime.now(), periods=180, freq='D')
     random.seed(hash(code) % 100)
-    base = random.uniform(0.8, 2.0)
+    base = random.uniform(1.0, 2.0)
     prices = [base]
     for i in range(179):
-        change = np.random.normal(0.0002, 0.02)
+        change = np.random.normal(0.0003, 0.018)
         prices.append(prices[-1] * (1 + change))
     df = pd.DataFrame({'日期': dates, '收盘': prices})
     df['日期'] = pd.to_datetime(df['日期'])
     df['收盘'] = df['收盘'].astype(float)
-    return df.sort_values('日期')
+    return df.sort_values('日期'), "模拟数据"
+
+def get_real_time_price(code, holding_type="ETF"):
+    """获取当前价格"""
+    df, source = get_fund_data(code, holding_type)
+    if df is not None and not df.empty:
+        return float(df['收盘'].iloc[-1]), source
+    return None, "无数据"
 
 # ==================== 微信通知 ====================
 WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=9f94cf9d-5c12-4ad3-a2d2-5ef15afc17bb"
@@ -150,14 +153,7 @@ def analyze_holding(holding):
     buy_price = float(holding["nav"])
     holding_type = holding.get("type", "ETF")
     
-    try:
-        if holding_type in ["场外基金", "普通基金"]:
-            df = get_fund_data(code)
-        else:
-            df = get_etf_data(code)
-    except:
-        df = get_etf_data(code)
-    
+    df, source = get_fund_data(code, holding_type)
     if df is None or df.empty:
         return None
     
@@ -183,14 +179,15 @@ def analyze_holding(holding):
     sell_signals = []
     buy_signals = []
     
-    if profit_rate >= 10:
-        sell_signals.append(f"🎯 止盈线（+{profit_rate:.1f}%），建议分批卖出")
-    elif profit_rate >= 7:
+    # 止盈止损逻辑
+    if profit_rate >= 15:
+        sell_signals.append(f"🎯 已达止盈线（+{profit_rate:.1f}%），建议分批卖出")
+    elif profit_rate >= 10:
         sell_signals.append(f"📈 接近止盈（+{profit_rate:.1f}%）")
     
-    if profit_rate <= -5:
-        sell_signals.append(f"⚠️ 止损线（{profit_rate:.1f}%），建议离场")
-    elif profit_rate <= -3:
+    if profit_rate <= -8:
+        sell_signals.append(f"⚠️ 触发止损线（{profit_rate:.1f}%），建议离场")
+    elif profit_rate <= -5:
         sell_signals.append(f"📉 接近止损（{profit_rate:.1f}%）")
     
     if current_price < ma20 and profit_rate > 0:
@@ -217,7 +214,6 @@ def analyze_holding(holding):
         advice = f"📊 盈亏{profit_rate:.1f}%，继续持有"
         all_signals = [advice]
     
-    # 转换历史数据为Python原生类型
     history_data = []
     for _, row in df.tail(60).iterrows():
         history_data.append({
@@ -238,7 +234,8 @@ def analyze_holding(holding):
         "all_signals": all_signals,
         "buy_date": holding.get("buy_date", ""),
         "history_data": history_data,
-        "holding_type": holding_type
+        "holding_type": holding_type,
+        "data_source": source
     }
 
 def auto_monitor_all_holdings():
@@ -408,6 +405,14 @@ with tab1:
                 with col4:
                     btn_key = f"buy_{rec['code']}_{i}"
                     if st.button("📥 买入", key=btn_key, use_container_width=True):
+                        # 获取真实净值作为买入价
+                        price, source = get_real_time_price(rec['code'], category)
+                        if price is None:
+                            price = round(random.uniform(1.0, 2.5), 4)
+                            st.info(f"💡 使用模拟价格 {price:.4f}（无法获取真实净值）")
+                        else:
+                            st.info(f"💡 当前净值 {price:.4f}（{source}）")
+                        
                         current = load_holdings()
                         exist = [h for h in current if h["code"] == rec["code"]]
                         if exist:
@@ -418,18 +423,18 @@ with tab1:
                                 "name": rec["name"],
                                 "amount": float(rec["suggest_amount"]),
                                 "buy_date": datetime.now().strftime("%Y-%m-%d"),
-                                "nav": float(round(random.uniform(1.0, 3.0), 4)),
+                                "nav": float(price),
                                 "type": category
                             })
                             save_holdings(current)
-                            st.success(f"✅ 买入 {rec['name']} {rec['suggest_amount']:.0f}元")
-                            send_wechat_message(f"✅ 买入 {rec['name']} {rec['suggest_amount']:.0f}元")
+                            st.success(f"✅ 买入 {rec['name']} {rec['suggest_amount']:.0f}元 @ {price:.4f}")
+                            send_wechat_message(f"✅ 买入 {rec['name']} {rec['suggest_amount']:.0f}元 @ {price:.4f}")
                             st.rerun()
                 
                 st.caption(f"💡 {rec['reason']}")
                 st.divider()
 
-# ==================== Tab2: 持仓监控（带走势图） ====================
+# ==================== Tab2: 持仓监控 ====================
 with tab2:
     st.subheader("📊 持仓监控")
     st.caption(f"📊 {get_data_label()}")
@@ -465,7 +470,7 @@ with tab2:
                 with col1:
                     st.write(f"**{r['name']}**")
                     st.caption(f"买入：{r['buy_price']:.3f} → 现价：{r['current_price']:.3f}")
-                    st.caption(f"MA20：{r['ma20']:.3f} | RSI：{r['rsi']:.0f}")
+                    st.caption(f"数据来源：{r.get('data_source', '未知')} | MA20：{r['ma20']:.3f} | RSI：{r['rsi']:.0f}")
                 with col2:
                     profit = r['profit_rate']
                     if profit > 0:
@@ -482,7 +487,7 @@ with tab2:
                 
                 st.info(f"💡 {r['advice']}")
                 
-                # ===== 走势图 =====
+                # 走势图
                 if r.get('history_data'):
                     hist_df = pd.DataFrame(r['history_data'])
                     hist_df['日期'] = pd.to_datetime(hist_df['日期'])
@@ -530,7 +535,7 @@ with tab3:
         total_cost = sum(float(h["amount"]) for h in holdings)
         st.metric("总投入", f"{total_cost:.0f}元")
         df = pd.DataFrame(holdings)
-        st.dataframe(df[["name", "amount", "buy_date"]], use_container_width=True)
+        st.dataframe(df[["name", "amount", "buy_date", "nav"]], use_container_width=True)
     else:
         st.info("📭 暂无持仓")
 
@@ -545,7 +550,7 @@ with tab4:
                 st.write(f"**{h['name']}**")
                 st.caption(f"金额：{h['amount']}元 | 日期：{h.get('buy_date', '')}")
             with col2:
-                st.caption(f"净值：{h.get('nav', 0):.3f}")
+                st.caption(f"买入价：{h.get('nav', 0):.3f}")
             with col3:
                 if st.button("🗑️", key=f"del_{i}"):
                     holdings.pop(i)
@@ -575,4 +580,4 @@ with tab5:
 # ==================== 底部 ====================
 st.divider()
 st.caption("⚠️ 本系统为学习演示工具，不构成投资建议")
-st.caption(f"📊 {get_data_label()}")
+st.caption(f"📊 {get_data_label()} | 数据优先从akshare获取真实净值")
