@@ -7,6 +7,7 @@ import json
 import os
 import requests
 import random
+import time
 
 # ==================== 页面设置 ====================
 st.set_page_config(
@@ -136,10 +137,8 @@ def send_wechat_message(content):
     except:
         return False
 
-# ==================== AI买入决策（优化版） ====================
+# ==================== AI买入决策 ====================
 def ai_buy_decision(code, name, holding_type="ETF", existing_holdings=[]):
-    """AI判断是否值得买入，已持有且超买的会自动降级"""
-    
     df, source = get_fund_data(code, holding_type)
     if df is None or df.empty or len(df) < 30:
         return {"decision": "❌ 无法分析", "score": 0, "reasons": ["数据不足"], "action": "wait", "skip": True}
@@ -148,13 +147,10 @@ def ai_buy_decision(code, name, holding_type="ETF", existing_holdings=[]):
     latest = float(close[-1])
     latest_date = df['日期'].iloc[-1]
     
-    # 计算指标
     ret_1m = (latest / close[-22] - 1) * 100 if len(close) >= 22 else 0
-    ret_3m = (latest / close[-66] - 1) * 100 if len(close) >= 66 else 0
     ma20 = float(pd.Series(close).rolling(20).mean().values[-1]) if len(close) >= 20 else latest
     ma60 = float(pd.Series(close).rolling(60).mean().values[-1]) if len(close) >= 60 else latest
     
-    # RSI
     if len(close) >= 14:
         delta = pd.Series(close).diff()
         gain = (delta.where(delta > 0, 0)).rolling(14).mean()
@@ -165,7 +161,6 @@ def ai_buy_decision(code, name, holding_type="ETF", existing_holdings=[]):
     else:
         current_rsi = 50
     
-    # 位置
     if len(close) >= 60:
         high_60 = float(pd.Series(close).tail(60).max())
         low_60 = float(pd.Series(close).tail(60).min())
@@ -173,14 +168,11 @@ def ai_buy_decision(code, name, holding_type="ETF", existing_holdings=[]):
     else:
         position = 0.5
     
-    # 检查是否已持有
     already_hold = any(h["code"] == code for h in existing_holdings)
     
-    # ===== 评分 =====
     score = 50
     reasons = []
     
-    # 位置评分（30分）
     if position < 0.2:
         score += 25
         reasons.append(f"✅ 价格处于历史低位（{position*100:.0f}%分位）")
@@ -197,7 +189,6 @@ def ai_buy_decision(code, name, holding_type="ETF", existing_holdings=[]):
         score -= 10
         reasons.append(f"⚠️ 价格高位（{position*100:.0f}%分位）")
     
-    # 均线趋势（25分）
     if latest > ma20 > ma60:
         score += 22
         reasons.append("✅ 均线多头排列")
@@ -211,7 +202,6 @@ def ai_buy_decision(code, name, holding_type="ETF", existing_holdings=[]):
         score -= 8
         reasons.append("⚠️ 价格在MA60下方")
     
-    # RSI（20分）
     if current_rsi < 30:
         score += 18
         reasons.append(f"✅ RSI={current_rsi:.0f}超卖区")
@@ -228,7 +218,6 @@ def ai_buy_decision(code, name, holding_type="ETF", existing_holdings=[]):
         score -= 15
         reasons.append(f"⚠️ RSI={current_rsi:.0f}超买区")
     
-    # 动量（15分）
     if ret_1m > 5:
         score += 12
         reasons.append(f"✅ 近1月涨{ret_1m:.1f}%")
@@ -242,35 +231,34 @@ def ai_buy_decision(code, name, holding_type="ETF", existing_holdings=[]):
         score -= 8
         reasons.append(f"⚠️ 近1月大跌{abs(ret_1m):.1f}%")
     
-    # ===== 关键：如果已持有且RSI超买，强制降级 =====
     if already_hold and current_rsi > 70:
-        score = min(score, 45)  # 强制降到45分以下
-        reasons.append("📌 已持有该基金，且RSI超买，建议暂缓加仓")
-        decision = "⏳ 已持有-暂缓加仓"
+        score = min(score, 45)
+        reasons.append("📌 已持有且RSI超买，暂缓加仓")
+        decision = "⏳ 暂缓加仓"
         action = "wait"
-        advice = f"已持有该基金，RSI={current_rsi:.0f}超买区，建议等待回调再加仓"
+        advice = f"已持有，RSI={current_rsi:.0f}超买，等待回调"
     elif already_hold:
         score -= 10
-        reasons.append("📌 已持有该基金，请勿重复买入")
+        reasons.append("📌 已持有")
         decision = "📌 已持有"
         action = "hold_already"
-        advice = "您已持有该基金，请勿重复买入"
+        advice = "已持有该基金"
     elif score >= 70:
         decision = "✅ 强烈推荐买入"
         action = "strong_buy"
-        advice = f"综合评分{score}分，多项指标向好，建议积极配置"
+        advice = f"综合评分{score}分，建议积极配置"
     elif score >= 55:
         decision = "📈 建议买入"
         action = "buy"
-        advice = f"综合评分{score}分，整体条件较好，建议适量买入"
+        advice = f"综合评分{score}分，建议适量买入"
     elif score >= 40:
         decision = "⏳ 建议观望"
         action = "wait"
-        advice = f"综合评分{score}分，条件一般，建议等待更好时机"
+        advice = f"综合评分{score}分，等待更好时机"
     else:
         decision = "❌ 不建议买入"
         action = "avoid"
-        advice = f"综合评分{score}分，多项指标偏弱，建议回避"
+        advice = f"综合评分{score}分，建议回避"
     
     score = max(0, min(100, score))
     
@@ -331,7 +319,6 @@ def analyze_holding(holding):
         current_rsi = 50
     
     sell_signals = []
-    # 止盈止损
     if profit_rate >= 15:
         sell_signals.append(f"🎯 止盈线（+{profit_rate:.1f}%），建议卖出")
     elif profit_rate >= 10:
@@ -340,7 +327,6 @@ def analyze_holding(holding):
         sell_signals.append(f"⚠️ 止损线（{profit_rate:.1f}%），建议离场")
     elif profit_rate <= -5:
         sell_signals.append(f"📉 接近止损（{profit_rate:.1f}%）")
-    # 技术指标
     if current_price < ma20 and profit_rate > 0:
         sell_signals.append("📊 跌破20日均线")
     if current_rsi > 70:
@@ -489,7 +475,7 @@ with tab1:
         st.caption("")
         st.caption("💡 AI全扫描")
     
-    if st.button("🔍 全扫描（AI分析所有基金）", use_container_width=True, type="primary"):
+    if st.button("🔍 全扫描", use_container_width=True, type="primary"):
         with st.spinner("AI正在扫描..."):
             holdings = load_holdings()
             results = scan_all_for_buy(category, "中", holdings)
@@ -499,12 +485,10 @@ with tab1:
     
     if st.session_state.scan_results:
         results = st.session_state.scan_results
-        
-        # 过滤掉"已持有"的显示，但保留在列表中
         show_results = [r for r in results if r['action'] != 'hold_already']
         st.info(f"📊 强烈推荐 {len([r for r in results if r['action']=='strong_buy'])} 只 | 建议买入 {len([r for r in results if r['action']=='buy'])} 只 | 观望 {len([r for r in results if r['action']=='wait'])} 只")
         
-        for r in show_results[:10]:
+        for idx, r in enumerate(show_results[:10]):
             with st.container():
                 col1, col2, col3, col4 = st.columns([2, 1.2, 1, 1])
                 with col1:
@@ -523,13 +507,13 @@ with tab1:
                         st.warning("⏳ 观望")
                     elif r['action'] == "avoid":
                         st.error("❌ 不建议")
-                    elif r['action'] == "hold_already":
-                        st.caption("📌 已持有")
                     else:
                         st.caption("⏳ 观望")
                 with col4:
                     if r['action'] in ["strong_buy", "buy"] and not r.get('already_hold'):
-                        if st.button("📥 买入", key=f"buy_{r['code']}_{random.randint(1,10000)}"):
+                        # 用唯一的key，每次重新生成
+                        buy_key = f"buy_{r['code']}_{idx}_{datetime.now().strftime('%H%M%S%f')}"
+                        if st.button("📥 买入", key=buy_key, use_container_width=True):
                             price, source = get_current_price(r['code'], category)
                             if price is None:
                                 price = round(random.uniform(1.0, 2.5), 4)
@@ -550,6 +534,7 @@ with tab1:
                                 save_holdings(holdings)
                                 st.success(f"✅ 买入 {r['name']} {amount:.0f}元 @ {price:.4f}")
                                 send_wechat_message(f"✅ 买入 {r['name']} {amount:.0f}元")
+                                # 强制刷新
                                 st.rerun()
                     elif r.get('already_hold'):
                         st.caption("📌 已持有")
@@ -590,7 +575,7 @@ with tab2:
         c2.metric("🟢 持有", f"{hold} 只")
         
         if sell > 0:
-            st.warning(f"⚠️ 检测到 {sell} 只基金出现卖出信号，建议关注")
+            st.warning(f"⚠️ 检测到 {sell} 只基金出现卖出信号")
         
         for r in results:
             with st.container():
