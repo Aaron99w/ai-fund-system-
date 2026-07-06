@@ -46,32 +46,40 @@ def load_monitor_log():
 
 def save_monitor_log(log):
     with open(MONITOR_FILE, "w", encoding="utf-8") as f:
-        json.dump(log, f, ensure_ascii=False, indent=2)
+        json.dump(log, f, ensure_ascii=False, indent=2, default=str)
 
 # ==================== 判断交易时间 ====================
 def is_trading_time():
     """判断当前是否在A股交易时间（9:30-15:00）"""
     now = datetime.now()
-    # 周一至周五
+    # 周一至周五 (周一=0, 周日=6)
     if now.weekday() >= 5:
         return False
-    # 9:30-15:00
-    if 9 <= now.hour < 15:
-        if now.hour == 9 and now.minute < 30:
-            return False
+    # 9:30-11:30 和 13:00-15:00
+    hour = now.hour
+    minute = now.minute
+    if hour == 9 and minute >= 30:
+        return True
+    if 10 <= hour <= 11:
+        return True
+    if hour == 12:
+        return False
+    if hour == 13:
+        return True
+    if 14 <= hour < 15:
+        return True
+    if hour == 15 and minute == 0:
         return True
     return False
 
 def get_data_label():
-    """获取数据标签"""
     if is_trading_time():
         return "🟢 实时行情（交易中）"
     else:
         return "🔵 收盘价（非交易时间）"
 
-# ==================== 数据获取（区分实时/收盘） ====================
+# ==================== 数据获取 ====================
 def get_fund_data(code):
-    """获取基金数据"""
     try:
         import akshare as ak
         df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
@@ -79,6 +87,8 @@ def get_fund_data(code):
             df['净值日期'] = pd.to_datetime(df['净值日期'])
             df = df.sort_values('净值日期')
             df = df.rename(columns={'净值日期': '日期', '单位净值': '收盘'})
+            # 转换为Python原生类型
+            df['收盘'] = df['收盘'].astype(float)
             return df
     except:
         pass
@@ -92,10 +102,10 @@ def get_fund_data(code):
         prices.append(prices[-1] * (1 + change))
     df = pd.DataFrame({'日期': dates, '收盘': prices})
     df['日期'] = pd.to_datetime(df['日期'])
+    df['收盘'] = df['收盘'].astype(float)
     return df.sort_values('日期')
 
 def get_etf_data(code):
-    """获取ETF数据"""
     try:
         import akshare as ak
         end = datetime.now().strftime("%Y%m%d")
@@ -104,6 +114,7 @@ def get_etf_data(code):
         if df is not None and not df.empty:
             df['日期'] = pd.to_datetime(df['日期'])
             df = df.sort_values('日期')
+            df['收盘'] = df['收盘'].astype(float)
             return df
     except:
         pass
@@ -116,20 +127,8 @@ def get_etf_data(code):
         prices.append(prices[-1] * (1 + change))
     df = pd.DataFrame({'日期': dates, '收盘': prices})
     df['日期'] = pd.to_datetime(df['日期'])
+    df['收盘'] = df['收盘'].astype(float)
     return df.sort_values('日期')
-
-def get_current_price(code, holding_type="ETF"):
-    """获取当前价格（区分实时/收盘）"""
-    try:
-        if holding_type in ["场外基金", "普通基金"]:
-            df = get_fund_data(code)
-        else:
-            df = get_etf_data(code)
-        if df is not None and not df.empty:
-            return df['收盘'].iloc[-1]
-    except:
-        pass
-    return random.uniform(1.0, 3.0)
 
 # ==================== 微信通知 ====================
 WEBHOOK_URL = "https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=9f94cf9d-5c12-4ad3-a2d2-5ef15afc17bb"
@@ -144,11 +143,11 @@ def send_wechat_message(content):
     except:
         return False
 
-# ==================== AI监控分析（带走势图数据） ====================
+# ==================== AI监控分析 ====================
 def analyze_holding(holding):
     code = holding["code"]
     name = holding["name"]
-    buy_price = holding["nav"]
+    buy_price = float(holding["nav"])
     holding_type = holding.get("type", "ETF")
     
     try:
@@ -162,12 +161,12 @@ def analyze_holding(holding):
     if df is None or df.empty:
         return None
     
-    current_price = df['收盘'].iloc[-1]
+    current_price = float(df['收盘'].iloc[-1])
     profit_rate = (current_price - buy_price) / buy_price * 100
     
     close = df['收盘'].values
     if len(close) >= 20:
-        ma20 = pd.Series(close).rolling(20).mean().values[-1]
+        ma20 = float(pd.Series(close).rolling(20).mean().values[-1])
     else:
         ma20 = current_price
     
@@ -177,7 +176,7 @@ def analyze_holding(holding):
         loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
         rs = gain / loss
         rsi = 100 - (100 / (1 + rs))
-        current_rsi = rsi.iloc[-1] if not rsi.empty else 50
+        current_rsi = float(rsi.iloc[-1]) if not rsi.empty else 50
     else:
         current_rsi = 50
     
@@ -194,7 +193,7 @@ def analyze_holding(holding):
     elif profit_rate <= -3:
         sell_signals.append(f"📉 接近止损（{profit_rate:.1f}%）")
     
-    if not pd.isna(ma20) and current_price < ma20 and profit_rate > 0:
+    if current_price < ma20 and profit_rate > 0:
         sell_signals.append("📊 跌破20日均线")
     
     if current_rsi > 70:
@@ -218,17 +217,22 @@ def analyze_holding(holding):
         advice = f"📊 盈亏{profit_rate:.1f}%，继续持有"
         all_signals = [advice]
     
-    # 返回走势图数据
-    history_data = df.tail(60)[['日期', '收盘']].to_dict('records')
+    # 转换历史数据为Python原生类型
+    history_data = []
+    for _, row in df.tail(60).iterrows():
+        history_data.append({
+            "日期": row['日期'].strftime("%Y-%m-%d"),
+            "收盘": float(row['收盘'])
+        })
     
     return {
         "name": name,
         "code": code,
-        "buy_price": buy_price,
-        "current_price": current_price,
-        "profit_rate": profit_rate,
-        "ma20": ma20,
-        "rsi": current_rsi,
+        "buy_price": float(buy_price),
+        "current_price": float(current_price),
+        "profit_rate": float(profit_rate),
+        "ma20": float(ma20),
+        "rsi": float(current_rsi),
         "action": action,
         "advice": advice,
         "all_signals": all_signals,
@@ -243,13 +247,22 @@ def auto_monitor_all_holdings():
         return []
     results = []
     for h in holdings:
-        result = analyze_holding(h)
-        if result:
-            results.append(result)
-    log = {"time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "results": results}
-    logs = load_monitor_log()
-    logs.append(log)
-    save_monitor_log(logs[-50:])
+        try:
+            result = analyze_holding(h)
+            if result:
+                results.append(result)
+        except Exception as e:
+            continue
+    if results:
+        log = {
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "results": results
+        }
+        logs = load_monitor_log()
+        logs.append(log)
+        if len(logs) > 50:
+            logs = logs[-50:]
+        save_monitor_log(logs)
     return results
 
 # ==================== 基金池 ====================
@@ -338,12 +351,12 @@ with st.sidebar:
     st.divider()
     holdings = load_holdings()
     st.metric("持仓数量", f"{len(holdings)} 只")
-    total_cost = sum(h.get("amount", 0) for h in holdings)
+    total_cost = sum(float(h.get("amount", 0)) for h in holdings)
     st.metric("已投入", f"{total_cost:.0f} 元")
     st.metric("剩余资金", f"{total_cash - total_cost:.0f} 元")
     
     st.divider()
-    st.caption(f"📊 数据状态：{get_data_label()}")
+    st.caption(f"📊 {get_data_label()}")
     
     st.divider()
     if st.button("📤 测试微信", use_container_width=True):
@@ -403,9 +416,9 @@ with tab1:
                             current.append({
                                 "code": rec["code"],
                                 "name": rec["name"],
-                                "amount": rec["suggest_amount"],
+                                "amount": float(rec["suggest_amount"]),
                                 "buy_date": datetime.now().strftime("%Y-%m-%d"),
-                                "nav": round(random.uniform(1.0, 3.0), 4),
+                                "nav": float(round(random.uniform(1.0, 3.0), 4)),
                                 "type": category
                             })
                             save_holdings(current)
@@ -424,12 +437,13 @@ with tab2:
     col1, col2 = st.columns([2, 1])
     with col1:
         if st.button("🔍 扫描持仓", use_container_width=True, type="primary"):
-            results = auto_monitor_all_holdings()
-            st.session_state.monitor_results = results
-            st.success(f"✅ 扫描完成")
-            st.rerun()
+            with st.spinner("扫描中..."):
+                results = auto_monitor_all_holdings()
+                st.session_state.monitor_results = results
+                st.success(f"✅ 扫描完成")
+                st.rerun()
     with col2:
-        st.caption("💡 点击扫描更新数据")
+        st.caption("💡 点击更新数据")
     
     results = st.session_state.monitor_results if st.session_state.monitor_results else auto_monitor_all_holdings()
     
@@ -480,14 +494,12 @@ with tab2:
                         name='净值走势',
                         line=dict(color='blue', width=2)
                     ))
-                    # 买入价水平线
                     fig.add_hline(
                         y=r['buy_price'], 
                         line_dash="dash", 
                         line_color="green",
                         annotation_text=f"买入价 {r['buy_price']:.3f}"
                     )
-                    # 均线
                     if len(hist_df) >= 20:
                         ma20_vals = hist_df['收盘'].rolling(20).mean()
                         fig.add_trace(go.Scatter(
@@ -515,7 +527,7 @@ with tab3:
     st.subheader("📈 组合分析")
     holdings = load_holdings()
     if holdings:
-        total_cost = sum(h["amount"] for h in holdings)
+        total_cost = sum(float(h["amount"]) for h in holdings)
         st.metric("总投入", f"{total_cost:.0f}元")
         df = pd.DataFrame(holdings)
         st.dataframe(df[["name", "amount", "buy_date"]], use_container_width=True)
@@ -563,4 +575,4 @@ with tab5:
 # ==================== 底部 ====================
 st.divider()
 st.caption("⚠️ 本系统为学习演示工具，不构成投资建议")
-st.caption(f"📊 数据状态：{get_data_label()} | 非交易时间显示收盘价")
+st.caption(f"📊 {get_data_label()}")
