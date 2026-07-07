@@ -168,7 +168,6 @@ with st.sidebar:
             st.error("❌ 发送失败，请检查地址")
 
 # ==================== 主界面 ====================
-# 修复：6个Tab → 6个变量
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📈 AI推荐",
     "📊 持仓监控",
@@ -184,15 +183,23 @@ with tab1:
     for i, f in enumerate(FUNDS):
         score = ai_score(f)
         with st.container():
-            col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+            # 调整列宽，第三列放输入框
+            col1, col2, col3, col4 = st.columns([2, 1, 1.2, 1])
             with col1:
                 st.write(f"**{i+1}. {f['name']}**")
                 st.caption(f"{f['code']} | {f['style']} | 风险：{f['risk']}")
             with col2:
                 st.metric("AI评分", f"{score}/100")
             with col3:
-                st.caption("建议投入")
-                st.caption("**1000元**")
+                # 金额输入框
+                buy_amount = st.number_input(
+                    "金额(元)", 
+                    min_value=100, 
+                    max_value=10000, 
+                    value=1000, 
+                    step=100, 
+                    key=f"amount_{f['code']}"
+                )
             with col4:
                 holdings = load_holdings()
                 already = any(h["code"] == f["code"] for h in holdings)
@@ -207,16 +214,17 @@ with tab1:
                         holdings.append({
                             "code": f["code"],
                             "name": f["name"],
-                            "amount": 1000,
+                            "amount": buy_amount,  # 使用用户输入的金额
                             "buy_date": datetime.now().strftime("%Y-%m-%d"),
                             "nav": real_nav
                         })
                         save_holdings(holdings)
-                        st.success(f"✅ 买入 {f['name']} 1000元，净值 {real_nav:.4f}")
-                        send_wechat_message(f"✅ 买入 {f['name']}，金额1000元")
+                        st.success(f"✅ 买入 {f['name']} {buy_amount}元，净值 {real_nav:.4f}")
+                        send_wechat_message(f"✅ 买入 {f['name']}，金额{buy_amount}元")
                         st.rerun()
             st.divider()
 
+# ==================== 以下 Tab2~Tab6 与之前相同，保持不变 ====================
 # ==================== Tab2: 持仓监控（含止盈止损） ====================
 with tab2:
     st.subheader("📊 持仓监控")
