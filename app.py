@@ -97,7 +97,6 @@ FUNDS = [
 
 # ==================== AI推荐评分 ====================
 def ai_score(fund):
-    # 模拟评分（可接入真实因子）
     return random.randint(60, 95)
 
 # ==================== 定投计算器 ====================
@@ -111,7 +110,6 @@ def calculate_drip(monthly, annual_return, years):
 
 # ==================== 模拟基金业绩（用于对比） ====================
 def get_fund_performance(code):
-    # 模拟近3月、近1年收益
     return {
         "近3月": round(random.uniform(-5, 15), 2),
         "近1年": round(random.uniform(-10, 30), 2)
@@ -119,7 +117,6 @@ def get_fund_performance(code):
 
 # ==================== 市场情绪（模拟） ====================
 def get_market_sentiment():
-    # 模拟基于沪深300涨跌
     change = random.uniform(-2, 2)
     if change > 0.5:
         return "乐观", "😊", change
@@ -171,11 +168,12 @@ with st.sidebar:
             st.error("❌ 发送失败，请检查地址")
 
 # ==================== 主界面 ====================
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+# 修复：6个Tab → 6个变量
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📈 AI推荐",
     "📊 持仓监控",
     "📋 持仓管理",
-    "📊 定投计算器",
+    "💰 定投计算器",
     "📊 基金对比",
     "📈 市场情绪"
 ])
@@ -247,7 +245,6 @@ with tab2:
                     if action == "止盈":
                         st.warning("📈 建议分批卖出")
                         if st.button("📤 已止盈", key=f"take_profit_{h['code']}"):
-                            # 模拟卖出
                             holdings = load_holdings()
                             holdings = [x for x in holdings if x["code"] != h["code"]]
                             save_holdings(holdings)
@@ -311,7 +308,6 @@ with tab4:
         st.success(f"📈 最终资产：{total:,.0f} 元")
         st.info(f"💵 收益：{profit:,.0f} 元（收益率 {profit/total_invested*100:.1f}%）")
         
-        # 简单图表
         data = []
         rate = annual_return / 12 / 100
         cur = 0
@@ -345,7 +341,6 @@ with tab5:
         df = pd.DataFrame(compare_data)
         st.dataframe(df, use_container_width=True)
         
-        # 柱状图
         fig = go.Figure()
         fig.add_trace(go.Bar(
             x=df["基金"],
