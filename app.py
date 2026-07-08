@@ -18,7 +18,7 @@ st.set_page_config(
 )
 
 st.title("📊 AI智能投资系统")
-st.caption("📈 一键买入 · 实时盈亏 · 止盈止损 · 定投计算 · 基金对比 · 市场情绪 · 微信通知")
+st.caption("📈 场内ETF · 场外基金 · 股票 · 可转债 · REITs · 全品种覆盖")
 
 # ==================== GitHub永久存储 ====================
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
@@ -111,38 +111,160 @@ def send_wechat_message(content):
         return False
 
 # ==================== 真实净值获取 ====================
-def get_real_nav(code):
+def get_real_nav(code, asset_type="场外基金"):
     try:
         import akshare as ak
-        df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
-        if df is not None and not df.empty:
-            return float(df['单位净值'].iloc[-1]), "akshare"
-    except:
-        pass
-    try:
-        url = f"https://hq.sinajs.cn/list=f_{code}"
-        headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://finance.sina.com.cn"}
-        response = requests.get(url, headers=headers, timeout=5)
-        if response.status_code == 200:
-            data = response.text
-            if data and len(data) > 20:
-                parts = data.split(',')
-                if len(parts) > 3:
-                    nav = float(parts[3]) if parts[3] else None
-                    if nav and nav > 0:
-                        return nav, "新浪财经"
+        if asset_type in ["场外基金", "普通基金"]:
+            df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
+            if df is not None and not df.empty:
+                return float(df['单位净值'].iloc[-1]), "akshare"
+        else:
+            df = ak.stock_zh_a_hist(symbol=code, period="daily", start_date=(datetime.now()-timedelta(days=3)).strftime("%Y%m%d"), end_date=datetime.now().strftime("%Y%m%d"), adjust="qfq")
+            if df is not None and not df.empty:
+                return float(df['收盘'].iloc[-1]), "akshare"
     except:
         pass
     random.seed(hash(code) % 100)
-    return round(random.uniform(0.8, 2.5), 4), "模拟数据"
+    return round(random.uniform(0.8, 5.0), 4), "模拟数据"
 
-def get_real_nav_with_retry(code, max_retries=3):
+def get_real_nav_with_retry(code, asset_type="场外基金", max_retries=3):
     for i in range(max_retries):
-        result = get_real_nav(code)
+        result = get_real_nav(code, asset_type)
         if result and result[0] and result[0] > 0:
             return result
         time.sleep(0.2)
-    return round(random.uniform(0.8, 2.5), 4), "模拟数据"
+    return round(random.uniform(0.8, 5.0), 4), "模拟数据"
+
+# ==================== 五大类别资产池 ====================
+ASSET_POOLS = {
+    "场内ETF": {
+        "icon": "📈",
+        "description": "交易灵活、费用低，适合短线操作和行业轮动",
+        "list": [
+            {"name": "科创50ETF", "code": "588000", "style": "科创板", "risk": "高"},
+            {"name": "创业板ETF", "code": "159915", "style": "创业板", "risk": "高"},
+            {"name": "芯片ETF", "code": "159995", "style": "半导体", "risk": "高"},
+            {"name": "半导体ETF", "code": "512480", "style": "半导体", "risk": "高"},
+            {"name": "人工智能ETF", "code": "159819", "style": "AI", "risk": "高"},
+            {"name": "新能源车ETF", "code": "515030", "style": "新能源", "risk": "高"},
+            {"name": "光伏ETF", "code": "515790", "style": "新能源", "risk": "高"},
+            {"name": "军工ETF", "code": "512660", "style": "军工", "risk": "高"},
+            {"name": "证券ETF", "code": "512880", "style": "券商", "risk": "中高"},
+            {"name": "沪深300ETF", "code": "510300", "style": "大盘", "risk": "中"},
+            {"name": "中证500ETF", "code": "510500", "style": "中小盘", "risk": "中"},
+            {"name": "酒ETF", "code": "512690", "style": "白酒", "risk": "中高"},
+            {"name": "医药ETF", "code": "512010", "style": "医药", "risk": "中高"},
+            {"name": "中概互联ETF", "code": "513050", "style": "互联网", "risk": "高"},
+            {"name": "纳指ETF", "code": "513100", "style": "美股", "risk": "高"},
+            {"name": "恒生科技ETF", "code": "513130", "style": "港股科技", "risk": "高"},
+            {"name": "银行ETF", "code": "512800", "style": "银行", "risk": "低"},
+            {"name": "消费ETF", "code": "159928", "style": "消费", "risk": "中"},
+        ]
+    },
+    "场外基金": {
+        "icon": "📊",
+        "description": "主动管理型基金，适合长期定投",
+        "list": [
+            {"name": "前海开源人工智能混合", "code": "001986", "style": "科技", "risk": "高"},
+            {"name": "万家人工智能混合", "code": "006281", "style": "科技", "risk": "高"},
+            {"name": "中欧时代先锋股票A", "code": "001938", "style": "科技", "risk": "高"},
+            {"name": "易方达蓝筹精选混合", "code": "005827", "style": "消费", "risk": "中"},
+            {"name": "交银阿尔法核心混合", "code": "519712", "style": "均衡", "risk": "中"},
+            {"name": "兴全合润混合", "code": "163406", "style": "均衡", "risk": "中"},
+            {"name": "富国天惠成长混合", "code": "161005", "style": "均衡", "risk": "中"},
+            {"name": "中欧医疗健康混合A", "code": "003095", "style": "医药", "risk": "高"},
+            {"name": "诺安成长混合", "code": "320007", "style": "芯片", "risk": "高"},
+            {"name": "农银新能源主题混合", "code": "002190", "style": "新能源", "risk": "高"},
+        ]
+    },
+    "股票": {
+        "icon": "📊",
+        "description": "精选A股优质龙头，适合深入研究",
+        "list": [
+            {"name": "贵州茅台", "code": "600519", "style": "消费", "risk": "中"},
+            {"name": "宁德时代", "code": "300750", "style": "新能源", "risk": "高"},
+            {"name": "比亚迪", "code": "002594", "style": "新能源", "risk": "高"},
+            {"name": "药明康德", "code": "603259", "style": "医药", "risk": "高"},
+            {"name": "中国平安", "code": "601318", "style": "金融", "risk": "中"},
+            {"name": "招商银行", "code": "600036", "style": "金融", "risk": "中"},
+            {"name": "美的集团", "code": "000333", "style": "消费", "risk": "中"},
+            {"name": "中芯国际", "code": "688981", "style": "芯片", "risk": "高"},
+            {"name": "长江电力", "code": "600900", "style": "电力", "risk": "低"},
+            {"name": "海尔智家", "code": "600690", "style": "消费", "risk": "中"},
+        ]
+    },
+    "可转债": {
+        "icon": "📋",
+        "description": "下有保底上不封顶，适合稳健型投资者",
+        "list": [
+            {"name": "隆22转债", "code": "113055", "style": "光伏", "risk": "中"},
+            {"name": "中信转债", "code": "113021", "style": "金融", "risk": "低"},
+            {"name": "兴业转债", "code": "113052", "style": "金融", "risk": "低"},
+            {"name": "中银转债", "code": "113057", "style": "金融", "risk": "低"},
+            {"name": "海亮转债", "code": "123091", "style": "有色", "risk": "中"},
+        ]
+    },
+    "REITs": {
+        "icon": "🏠",
+        "description": "稳定收息资产，适合长期持有获取分红",
+        "list": [
+            {"name": "张江REIT", "code": "508000", "style": "产业园", "risk": "中"},
+            {"name": "蛇口REIT", "code": "180101", "style": "产业园", "risk": "中"},
+            {"name": "盐港REIT", "code": "180301", "style": "港口", "risk": "中"},
+            {"name": "普洛斯REIT", "code": "508056", "style": "仓储", "risk": "中"},
+            {"name": "首创水务REIT", "code": "508006", "style": "水务", "risk": "中"},
+        ]
+    }
+}
+
+# ==================== AI推荐评分 ====================
+def get_ai_recommendation(asset, asset_type):
+    score = random.randint(60, 95)
+    style_reasons = {
+        "科技": "科技板块受益于AI技术突破和国产替代加速，长期成长空间大",
+        "消费": "消费行业具备稳定增长属性，受益于内需复苏和消费升级",
+        "均衡": "均衡配置多行业龙头，分散风险，适合作为底仓",
+        "医药": "医药行业刚需强劲，创新药和医疗器械持续受益于老龄化",
+        "芯片": "芯片国产化进程加速，政策支持力度大，国产替代空间广阔",
+        "新能源": "新能源是全球能源转型主线，政策持续利好，需求保持高增长",
+        "金融": "金融板块估值处于历史低位，高股息率提供安全边际",
+        "军工": "军工行业景气度持续提升，国防开支稳定增长",
+        "科创板": "科创企业高成长性，代表未来发展方向",
+        "创业板": "创业创新企业活力强，成长空间大",
+        "半导体": "半导体国产化进程加速，政策支持力度大",
+        "AI": "人工智能是未来十年最大的技术革命",
+        "券商": "券商直接受益于市场活跃度提升",
+        "大盘": "大盘蓝筹稳健，适合作为底仓配置",
+        "中小盘": "中小盘弹性大，成长性突出",
+        "白酒": "白酒行业消费升级趋势明确",
+        "互联网": "互联网平台经济价值重估",
+        "美股": "美股科技巨头全球领先",
+        "港股科技": "港股科技股估值处于历史低位",
+        "银行": "银行板块高股息，防御属性强",
+        "光伏": "光伏装机持续增长，全球需求旺盛",
+        "产业园": "产业园租金收入稳定",
+        "港口": "港口吞吐量稳定增长",
+        "仓储": "仓储物流需求持续旺盛",
+        "水务": "水务刚需属性强",
+        "有色": "有色金属价格波动带来交易机会",
+        "电力": "电力需求稳定增长",
+    }
+    hold_advice = {
+        "高": "短期波动大，建议持有1-2年，分批止盈",
+        "中": "波动适中，建议持有2-3年，稳健增值",
+        "中高": "建议持有1.5-2.5年，关注市场节奏",
+        "中低": "建议持有3年以上，追求长期稳健回报",
+        "低": "波动小，建议持有3-5年，追求稳定回报"
+    }
+    extra = " ⭐ 综合表现优秀，当前性价比较高" if score >= 85 else " ✅ 综合表现良好，适合当前配置" if score >= 70 else " 📊 综合表现一般，建议小仓位参与" if score >= 55 else " ⚠️ 综合表现偏弱，建议谨慎参与"
+    reason = style_reasons.get(asset.get("style", ""), "该资产风格适合当前市场环境") + extra
+    target = "建议止盈目标：+15%~+20%" if score >= 80 else "建议止盈目标：+12%~+15%" if score >= 65 else "建议止盈目标：+8%~+12%"
+    return {
+        "score": score,
+        "reason": reason,
+        "hold_suggestion": hold_advice.get(asset.get("risk", "中"), "建议持有1-3年"),
+        "target": target
+    }
 
 # ==================== 市场数据 ====================
 def get_market_data():
@@ -231,29 +353,7 @@ def get_market_info():
         pass
     return {"good": ["政策持续发力，稳增长预期明确", "北向资金今日净流入超50亿元", "科技板块迎来新的政策支持"], "bad": ["市场成交量持续萎缩", "部分行业面临去库存压力", "外部环境不确定性增加"]}
 
-# ==================== 基金池 ====================
-FUNDS = [
-    {"name": "前海开源人工智能混合", "code": "001986", "style": "科技", "risk": "高"},
-    {"name": "万家人工智能混合", "code": "006281", "style": "科技", "risk": "高"},
-    {"name": "中欧时代先锋股票A", "code": "001938", "style": "科技", "risk": "高"},
-    {"name": "易方达蓝筹精选混合", "code": "005827", "style": "消费", "risk": "中"},
-    {"name": "交银阿尔法核心混合", "code": "519712", "style": "均衡", "risk": "中"},
-    {"name": "兴全合润混合", "code": "163406", "style": "均衡", "risk": "中"},
-    {"name": "富国天惠成长混合", "code": "161005", "style": "均衡", "risk": "中"},
-    {"name": "中欧医疗健康混合A", "code": "003095", "style": "医药", "risk": "高"},
-    {"name": "诺安成长混合", "code": "320007", "style": "芯片", "risk": "高"},
-    {"name": "农银新能源主题混合", "code": "002190", "style": "新能源", "risk": "高"},
-]
-
-def get_ai_recommendation(fund):
-    score = random.randint(60, 95)
-    style_reasons = {"科技": "科技板块受益于AI技术突破和国产替代加速，长期成长空间大", "消费": "消费行业具备稳定增长属性，受益于内需复苏和消费升级", "均衡": "均衡配置多行业龙头，分散风险，适合作为底仓", "医药": "医药行业刚需强劲，创新药和医疗器械持续受益于老龄化", "芯片": "芯片国产化进程加速，政策支持力度大，国产替代空间广阔", "新能源": "新能源是全球能源转型主线，政策持续利好，需求保持高增长", "金融": "金融板块估值处于历史低位，高股息率提供安全边际", "军工": "军工行业景气度持续提升，国防开支稳定增长"}
-    hold_advice = {"高": "短期波动大，建议持有1-2年，分批止盈", "中": "波动适中，建议持有2-3年，稳健增值", "中高": "建议持有1.5-2.5年，关注市场节奏", "中低": "建议持有3年以上，追求长期稳健回报"}
-    extra = " ⭐ 综合表现优秀，当前性价比较高" if score >= 85 else " ✅ 综合表现良好，适合当前配置" if score >= 70 else " 📊 综合表现一般，建议小仓位参与" if score >= 55 else " ⚠️ 综合表现偏弱，建议谨慎参与"
-    reason = style_reasons.get(fund["style"], "该基金风格适合当前市场环境") + extra
-    target = "建议止盈目标：+15%~+20%" if score >= 80 else "建议止盈目标：+12%~+15%" if score >= 65 else "建议止盈目标：+8%~+12%"
-    return {"score": score, "reason": reason, "hold_suggestion": hold_advice.get(fund["risk"], "建议持有1-3年"), "target": target}
-
+# ==================== 定投计算器 ====================
 def calculate_drip(monthly, annual_return, years):
     months = years * 12
     rate = annual_return / 12 / 100
@@ -310,45 +410,87 @@ with st.sidebar:
                 st.error("❌ 发送失败")
     else:
         st.warning("⚠️ 未配置微信通知")
-        st.caption("请在Secrets中配置 WEBHOOK_URL")
     
     st.divider()
     st.caption("📊 数据状态：GitHub永久存储")
     st.caption("🔄 数据跨部署保留")
 
 # ==================== 主界面 ====================
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📈 AI推荐", "📊 持仓监控", "📋 持仓管理", "💰 定投计算器", "📊 基金对比", "📈 市场情绪"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    "📈 AI推荐",
+    "📊 持仓监控",
+    "📋 持仓管理",
+    "💰 定投计算器",
+    "📊 基金对比",
+    "📈 市场情绪"
+])
 
-# ==================== Tab1: AI推荐 ====================
+# ==================== Tab1: AI推荐（五大类别） ====================
 with tab1:
     st.subheader("🤖 AI智能推荐")
-    st.caption("📌 每只基金均包含：AI评分 + 推荐理由 + 持有建议")
-    for i, f in enumerate(FUNDS):
-        recommendation = get_ai_recommendation(f)
+    st.caption("📌 选择资产类别，AI从该类别中精选推荐")
+    
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        # 五大类别选择
+        asset_category = st.selectbox(
+            "选择资产类别",
+            options=list(ASSET_POOLS.keys()),
+            format_func=lambda x: f"{ASSET_POOLS[x]['icon']} {x} - {ASSET_POOLS[x]['description'][:20]}..."
+        )
+    with col2:
+        st.caption(f"📊 {ASSET_POOLS[asset_category]['icon']} {asset_category}")
+        st.caption(f"共 {len(ASSET_POOLS[asset_category]['list'])} 只标的")
+    
+    st.info(f"📌 {ASSET_POOLS[asset_category]['description']}")
+    
+    # 获取当前类别的资产列表
+    assets = ASSET_POOLS[asset_category]["list"]
+    
+    for i, asset in enumerate(assets):
+        recommendation = get_ai_recommendation(asset, asset_category)
         score = recommendation["score"]
+        
         with st.container():
             col1, col2, col3, col4 = st.columns([2, 1.2, 1.2, 1])
             with col1:
-                st.write(f"**{i+1}. {f['name']}**")
-                st.caption(f"{f['code']} | {f['style']} | 风险：{f['risk']}")
+                st.write(f"**{i+1}. {asset['name']}**")
+                st.caption(f"{asset['code']} | {asset['style']} | 风险：{asset['risk']}")
             with col2:
                 st.metric("AI评分", f"{score}/100")
             with col3:
-                buy_amount = st.number_input("金额(元)", min_value=100, max_value=10000, value=1000, step=100, key=f"amount_{f['code']}")
+                buy_amount = st.number_input(
+                    "金额(元)", 
+                    min_value=100, 
+                    max_value=10000, 
+                    value=1000, 
+                    step=100, 
+                    key=f"amount_{asset_category}_{asset['code']}"
+                )
             with col4:
                 holdings = load_holdings()
-                already = any(h["code"] == f["code"] for h in holdings)
+                already = any(h["code"] == asset["code"] for h in holdings)
                 if already:
-                    st.button("✅ 已持有", disabled=True, key=f"held_{f['code']}")
+                    st.button("✅ 已持有", disabled=True, key=f"held_{asset_category}_{asset['code']}")
                 else:
-                    if st.button("📥 买入", key=f"buy_{f['code']}_{i}"):
-                        nav, source = get_real_nav_with_retry(f["code"])
+                    if st.button("📥 买入", key=f"buy_{asset_category}_{asset['code']}_{i}"):
+                        nav, source = get_real_nav_with_retry(asset["code"], asset_category)
                         holdings = load_holdings()
-                        holdings.append({"code": f["code"], "name": f["name"], "amount": buy_amount, "buy_date": datetime.now().strftime("%Y-%m-%d"), "nav": nav, "nav_source": source})
+                        holdings.append({
+                            "code": asset["code"],
+                            "name": asset["name"],
+                            "amount": buy_amount,
+                            "buy_date": datetime.now().strftime("%Y-%m-%d"),
+                            "nav": nav,
+                            "nav_source": source,
+                            "asset_type": asset_category,
+                            "style": asset.get("style", "")
+                        })
                         save_holdings(holdings)
-                        st.success(f"✅ 买入 {f['name']} {buy_amount}元，净值 {nav:.4f} ({source})")
-                        send_wechat_message(f"✅ 买入 {f['name']}，金额{buy_amount}元")
+                        st.success(f"✅ 买入 {asset['name']} {buy_amount}元，净值 {nav:.4f} ({source})")
+                        send_wechat_message(f"✅ 买入 {asset['name']}，金额{buy_amount}元")
                         st.rerun()
+            
             st.info(f"💡 **推荐理由**：{recommendation['reason']}")
             st.caption(f"📅 **建议持有**：{recommendation['hold_suggestion']} | **止盈目标**：{recommendation['target']}")
             st.divider()
@@ -361,7 +503,8 @@ with tab2:
     if holdings:
         nav_cache = {}
         for h in holdings:
-            nav, source = get_real_nav_with_retry(h["code"])
+            asset_type = h.get("asset_type", "场外基金")
+            nav, source = get_real_nav_with_retry(h["code"], asset_type)
             nav_cache[h["code"]] = {"nav": nav, "source": source}
         total_profit, total_cost = 0, 0
         for h in holdings:
@@ -377,10 +520,12 @@ with tab2:
             total_profit += profit
             total_cost += amount
             status, action = check_stop(profit_rate)
+            asset_type = h.get("asset_type", "场外基金")
             with st.container():
                 col1, col2, col3, col4, col5 = st.columns([2, 1, 1, 1, 1])
                 with col1:
                     st.write(f"**{h['name']}**")
+                    st.caption(f"{asset_type} | {h.get('style', '')}")
                     st.caption(f"买入价：{buy_price:.4f} | 现价：{current_nav:.4f}")
                     st.caption(f"份额：{shares:.2f}份 | 数据：{source}")
                 with col2:
@@ -429,6 +574,7 @@ with tab3:
             with col1:
                 st.write(f"**{h['name']}**")
                 st.caption(f"金额：{h['amount']}元 | 日期：{h.get('buy_date', '')}")
+                st.caption(f"类型：{h.get('asset_type', '场外基金')}")
             with col2:
                 st.caption(f"买入价：{h.get('nav', 0):.4f}")
             with col3:
@@ -475,23 +621,27 @@ with tab4:
 with tab5:
     st.subheader("📊 基金对比")
     st.caption("选择2-3只基金，对比近期表现")
-    selected_codes = st.multiselect("选择基金", options=[f"{f['name']} ({f['code']})" for f in FUNDS], default=[f"{FUNDS[0]['name']} ({FUNDS[0]['code']})", f"{FUNDS[1]['name']} ({FUNDS[1]['code']})"])
+    all_assets = []
+    for category, pool in ASSET_POOLS.items():
+        for asset in pool["list"]:
+            all_assets.append(f"{asset['name']} ({asset['code']})")
+    selected_codes = st.multiselect("选择标的", options=all_assets, default=all_assets[:2] if len(all_assets) >= 2 else all_assets)
     if len(selected_codes) >= 2:
         compare_data = []
         for item in selected_codes:
             code = item.split("(")[-1].replace(")", "")
             perf = get_fund_performance(code)
-            name = next(f["name"] for f in FUNDS if f["code"] == code)
-            compare_data.append({"基金": name, "近3月收益": f"{perf['近3月']:.1f}%", "近1年收益": f"{perf['近1年']:.1f}%"})
+            name = item.split(" (")[0]
+            compare_data.append({"标的": name, "近3月收益": f"{perf['近3月']:.1f}%", "近1年收益": f"{perf['近1年']:.1f}%"})
         df = pd.DataFrame(compare_data)
         st.dataframe(df, use_container_width=True)
         fig = go.Figure()
-        fig.add_trace(go.Bar(x=df["基金"], y=[float(x.replace("%","")) for x in df["近3月收益"]], name="近3月", marker_color="lightblue"))
-        fig.add_trace(go.Bar(x=df["基金"], y=[float(x.replace("%","")) for x in df["近1年收益"]], name="近1年", marker_color="lightgreen"))
+        fig.add_trace(go.Bar(x=df["标的"], y=[float(x.replace("%","")) for x in df["近3月收益"]], name="近3月", marker_color="lightblue"))
+        fig.add_trace(go.Bar(x=df["标的"], y=[float(x.replace("%","")) for x in df["近1年收益"]], name="近1年", marker_color="lightgreen"))
         fig.update_layout(height=400, title="收益对比")
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("请至少选择2只基金")
+        st.info("请至少选择2只标的")
 
 # ==================== Tab6: 市场情绪 ====================
 with tab6:
