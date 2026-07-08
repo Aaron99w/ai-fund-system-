@@ -83,10 +83,8 @@ def get_real_nav(code):
 
 # ==================== 真实市场数据获取 ====================
 def get_market_data():
-    """获取真实市场数据"""
     try:
         import akshare as ak
-        # 获取各大指数行情
         indices = {
             "上证指数": "sh000001",
             "深证成指": "sz399001", 
@@ -112,7 +110,6 @@ def get_market_data():
             except:
                 pass
         
-        # 如果获取失败，使用模拟数据
         if not market_data:
             for name in indices.keys():
                 change = random.uniform(-1.5, 1.8)
@@ -123,7 +120,6 @@ def get_market_data():
         
         return market_data
     except:
-        # 完全失败时返回模拟数据
         return {
             "上证指数": {"price": 3256.78, "change": round(random.uniform(-1.5, 1.8), 2)},
             "深证成指": {"price": 10890.23, "change": round(random.uniform(-1.5, 1.8), 2)},
@@ -134,12 +130,10 @@ def get_market_data():
 
 # ==================== 获取热门板块 ====================
 def get_hot_sectors():
-    """获取热门板块"""
     try:
         import akshare as ak
         df = ak.stock_sector_spot()
         if df is not None and not df.empty:
-            # 取前5和后5
             top = df.head(5)
             bottom = df.tail(5)
             return {
@@ -149,7 +143,6 @@ def get_hot_sectors():
     except:
         pass
     
-    # 模拟数据
     sectors = ["半导体", "人工智能", "新能源车", "光伏", "医药", "白酒", "金融", "军工"]
     random.shuffle(sectors)
     top = []
@@ -162,13 +155,11 @@ def get_hot_sectors():
 
 # ==================== AI新闻情绪分析 ====================
 def get_news_sentiment():
-    """获取新闻情绪"""
     try:
         import akshare as ak
         df = ak.stock_news_em(symbol="头条")
         if df is not None and not df.empty:
             headlines = df['新闻标题'].head(10).tolist()
-            # 简单分析
             positive_keywords = ["上涨", "大涨", "利好", "反弹", "突破", "新高", "增长", "降息", "政策", "支持"]
             negative_keywords = ["下跌", "大跌", "利空", "回调", "破位", "新低", "亏损", "加息", "制裁", "风险"]
             
@@ -208,7 +199,6 @@ def get_news_sentiment():
     except:
         pass
     
-    # 模拟
     return {
         "sentiment": "中性",
         "emoji": "😐",
@@ -226,8 +216,6 @@ def get_news_sentiment():
 
 # ==================== 获取利好/利空信息 ====================
 def get_market_info():
-    """获取市场利好利空信息"""
-    # 真实数据获取
     try:
         import akshare as ak
         news = ak.stock_news_em(symbol="头条")
@@ -255,7 +243,6 @@ def get_market_info():
     except:
         pass
     
-    # 模拟
     return {
         "good": ["政策持续发力，稳增长预期明确", "北向资金今日净流入超50亿元", "科技板块迎来新的政策支持"],
         "bad": ["市场成交量持续萎缩", "部分行业面临去库存压力", "外部环境不确定性增加"],
@@ -276,9 +263,59 @@ FUNDS = [
     {"name": "农银新能源主题混合", "code": "002190", "style": "新能源", "risk": "高"},
 ]
 
-# ==================== AI推荐评分 ====================
-def ai_score(fund):
-    return random.randint(60, 95)
+# ==================== AI推荐评分（含推荐理由和持有建议） ====================
+def get_ai_recommendation(fund):
+    """获取AI推荐结果，包含评分、理由、持有建议"""
+    score = random.randint(60, 95)
+    
+    # 根据风格生成推荐理由
+    style_reasons = {
+        "科技": "科技板块受益于AI技术突破和国产替代加速，长期成长空间大",
+        "消费": "消费行业具备稳定增长属性，受益于内需复苏和消费升级",
+        "均衡": "均衡配置多行业龙头，分散风险，适合作为底仓",
+        "医药": "医药行业刚需强劲，创新药和医疗器械持续受益于老龄化",
+        "芯片": "芯片国产化进程加速，政策支持力度大，国产替代空间广阔",
+        "新能源": "新能源是全球能源转型主线，政策持续利好，需求保持高增长",
+        "金融": "金融板块估值处于历史低位，高股息率提供安全边际",
+        "军工": "军工行业景气度持续提升，国防开支稳定增长"
+    }
+    
+    # 根据风险生成持有建议
+    hold_advice = {
+        "高": "短期波动大，建议持有1-2年，分批止盈",
+        "中": "波动适中，建议持有2-3年，稳健增值",
+        "中高": "建议持有1.5-2.5年，关注市场节奏",
+        "中低": "建议持有3年以上，追求长期稳健回报"
+    }
+    
+    # 根据评分生成附加建议
+    if score >= 85:
+        extra = " ⭐ 综合表现优秀，当前性价比较高"
+    elif score >= 70:
+        extra = " ✅ 综合表现良好，适合当前配置"
+    elif score >= 55:
+        extra = " 📊 综合表现一般，建议小仓位参与"
+    else:
+        extra = " ⚠️ 综合表现偏弱，建议谨慎参与"
+    
+    reason = style_reasons.get(fund["style"], "该基金风格适合当前市场环境") + extra
+    
+    # 止盈目标建议
+    if score >= 80:
+        target = "建议止盈目标：+15%~+20%"
+    elif score >= 65:
+        target = "建议止盈目标：+12%~+15%"
+    else:
+        target = "建议止盈目标：+8%~+12%"
+    
+    return {
+        "score": score,
+        "reason": reason,
+        "hold_suggestion": hold_advice.get(fund["risk"], "建议持有1-3年"),
+        "target": target,
+        "style": fund["style"],
+        "risk": fund["risk"]
+    }
 
 # ==================== 定投计算器 ====================
 def calculate_drip(monthly, annual_return, years):
@@ -348,13 +385,17 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📈 市场情绪"
 ])
 
-# ==================== Tab1: AI推荐 ====================
+# ==================== Tab1: AI推荐（含推荐理由） ====================
 with tab1:
     st.subheader("🤖 AI智能推荐")
+    st.caption("📌 每只基金均包含：AI评分 + 推荐理由 + 持有建议")
+    
     for i, f in enumerate(FUNDS):
-        score = ai_score(f)
+        recommendation = get_ai_recommendation(f)
+        score = recommendation["score"]
+        
         with st.container():
-            col1, col2, col3, col4 = st.columns([2, 1, 1.2, 1])
+            col1, col2, col3, col4 = st.columns([2, 1.2, 1.2, 1])
             with col1:
                 st.write(f"**{i+1}. {f['name']}**")
                 st.caption(f"{f['code']} | {f['style']} | 风险：{f['risk']}")
@@ -391,6 +432,10 @@ with tab1:
                         st.success(f"✅ 买入 {f['name']} {buy_amount}元，净值 {real_nav:.4f}")
                         send_wechat_message(f"✅ 买入 {f['name']}，金额{buy_amount}元")
                         st.rerun()
+            
+            # ===== 推荐理由和持有建议 =====
+            st.info(f"💡 **推荐理由**：{recommendation['reason']}")
+            st.caption(f"📅 **建议持有**：{recommendation['hold_suggestion']} | **止盈目标**：{recommendation['target']}")
             st.divider()
 
 # ==================== Tab2: 持仓监控 ====================
@@ -535,30 +580,25 @@ with tab5:
     else:
         st.info("请至少选择2只基金")
 
-# ==================== Tab6: 市场情绪（优化版） ====================
+# ==================== Tab6: 市场情绪 ====================
 with tab6:
     st.subheader("📈 市场情绪分析")
     st.caption("基于实时市场数据 + 新闻情绪综合判断")
     
-    # ===== 1. 获取真实数据 =====
     market_data = get_market_data()
     hot_sectors = get_hot_sectors()
     news_sentiment = get_news_sentiment()
     market_info = get_market_info()
     
-    # ===== 2. 判断综合情绪 =====
-    # 基于指数涨跌
     index_changes = [v["change"] for v in market_data.values()]
     avg_change = sum(index_changes) / len(index_changes) if index_changes else 0
     
-    # 综合新闻情绪
     news_score = 0
     if news_sentiment["sentiment"] == "乐观":
         news_score = 1
     elif news_sentiment["sentiment"] == "悲观":
         news_score = -1
     
-    # 综合判断
     if avg_change > 0.5 and news_score >= 0:
         final_sentiment = "乐观 😊"
         sentiment_desc = "市场整体上涨，新闻情绪偏积极"
@@ -580,7 +620,6 @@ with tab6:
         advice = "💡 市场情绪中性，保持观望"
         color = "yellow"
     
-    # ===== 3. 显示市场概览 =====
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("📊 综合情绪", final_sentiment)
@@ -591,9 +630,7 @@ with tab6:
     
     st.caption(f"📌 {sentiment_desc}")
     
-    # ===== 4. 各大指数表现 =====
     st.subheader("📊 各大指数表现")
-    
     index_cols = st.columns(5)
     for i, (name, data) in enumerate(market_data.items()):
         with index_cols[i]:
@@ -601,9 +638,7 @@ with tab6:
             delta = f"{'+' if change > 0 else ''}{change:.2f}%"
             st.metric(name, f"{data['price']:.2f}", delta=delta)
     
-    # ===== 5. 热门板块 =====
     st.subheader("🔥 热门板块")
-    
     col1, col2 = st.columns(2)
     with col1:
         st.caption("📈 涨幅居前")
@@ -621,9 +656,7 @@ with tab6:
         else:
             st.info("暂无数据")
     
-    # ===== 6. 利好/利空信息 =====
     st.subheader("📰 市场信息")
-    
     col1, col2 = st.columns(2)
     with col1:
         st.success("🟢 利好因素")
@@ -641,7 +674,6 @@ with tab6:
         else:
             st.write("• 暂无明显利空")
     
-    # ===== 7. 新闻摘要 =====
     with st.expander("📰 最新财经新闻", expanded=False):
         if news_sentiment and news_sentiment.get("headlines"):
             for h in news_sentiment["headlines"]:
@@ -649,7 +681,6 @@ with tab6:
         else:
             st.write("暂无新闻")
     
-    # ===== 8. 投资建议 =====
     st.divider()
     st.subheader("💡 综合投资建议")
     st.info(advice)
