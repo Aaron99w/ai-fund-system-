@@ -12,7 +12,6 @@ import base64
 
 # ==================== 北京时间工具函数 ====================
 def get_beijing_time():
-    """获取当前北京时间"""
     return datetime.utcnow() + timedelta(hours=8)
 
 def format_beijing_time(fmt="%Y-%m-%d %H:%M:%S"):
@@ -321,28 +320,54 @@ def get_hot_sectors():
         bottom.append({"板块名称": s, "涨跌幅": round(random.uniform(-3.5, -0.5), 2)})
     return {"top": top, "bottom": bottom}
 
+# ==================== 东方财富新闻快讯（7×24） ====================
 def get_news_sentiment():
+    """获取东方财富新闻（头条+快讯）"""
     try:
         import akshare as ak
-        df = ak.stock_news_em(symbol="头条")
-        if df is not None and not df.empty:
-            headlines = df['新闻标题'].head(10).tolist()
-            pos_keywords = ["上涨", "大涨", "利好", "反弹", "突破", "新高", "增长", "降息", "政策", "支持"]
-            neg_keywords = ["下跌", "大跌", "利空", "回调", "破位", "新低", "亏损", "加息", "制裁", "风险"]
-            pos_score = sum(1 for h in headlines for kw in pos_keywords if kw in str(h))
-            neg_score = sum(1 for h in headlines for kw in neg_keywords if kw in str(h))
-            if pos_score + neg_score == 0:
-                sentiment, emoji = "中性", "😐"
-            elif pos_score > neg_score * 1.5:
-                sentiment, emoji = "乐观", "😊"
-            elif neg_score > pos_score * 1.5:
-                sentiment, emoji = "悲观", "😰"
-            else:
-                sentiment, emoji = "中性", "😐"
-            return {"sentiment": sentiment, "emoji": emoji, "headlines": headlines[:5]}
-    except:
-        pass
-    return {"sentiment": "中性", "emoji": "😐", "headlines": ["市场震荡整理，等待方向选择", "北向资金小幅流入", "政策预期升温", "板块轮动加快", "成交量萎缩"]}
+        df_toutiao = ak.stock_news_em(symbol="头条")
+        df_kuaixun = ak.stock_news_em(symbol="快讯")
+        
+        all_news = []
+        if df_toutiao is not None and not df_toutiao.empty:
+            all_news.extend(df_toutiao['新闻标题'].tolist())
+        if df_kuaixun is not None and not df_kuaixun.empty:
+            all_news.extend(df_kuaixun['新闻标题'].tolist())
+        headlines = list(dict.fromkeys(all_news))[:20]  # 去重，取前20条
+        
+        pos_keywords = ["上涨", "大涨", "利好", "反弹", "突破", "新高", "增长", "降息", "政策", "支持"]
+        neg_keywords = ["下跌", "大跌", "利空", "回调", "破位", "新低", "亏损", "加息", "制裁", "风险"]
+        pos_score = sum(1 for h in headlines for kw in pos_keywords if kw in str(h))
+        neg_score = sum(1 for h in headlines for kw in neg_keywords if kw in str(h))
+        
+        if pos_score + neg_score == 0:
+            sentiment, emoji = "中性", "😐"
+        elif pos_score > neg_score * 1.5:
+            sentiment, emoji = "乐观", "😊"
+        elif neg_score > pos_score * 1.5:
+            sentiment, emoji = "悲观", "😰"
+        else:
+            sentiment, emoji = "中性", "😐"
+        
+        return {
+            "sentiment": sentiment,
+            "emoji": emoji,
+            "headlines": headlines,
+            "source": "东方财富（头条+快讯）"
+        }
+    except Exception as e:
+        return {
+            "sentiment": "中性",
+            "emoji": "😐",
+            "headlines": [
+                "市场震荡整理，等待方向选择",
+                "北向资金小幅流入",
+                "政策预期升温",
+                "板块轮动加快",
+                "成交量萎缩"
+            ],
+            "source": "模拟数据"
+        }
 
 def get_market_info():
     try:
@@ -653,10 +678,10 @@ with tab5:
     else:
         st.info("请至少选择2只标的")
 
-# ==================== Tab6: 市场情绪 ====================
+# ==================== Tab6: 市场情绪（含东方财富快讯） ====================
 with tab6:
     st.subheader("📈 市场情绪分析")
-    st.caption("基于实时市场数据 + 新闻情绪综合判断")
+    st.caption("基于实时市场数据 + 东方财富新闻情绪综合判断")
     col_refresh, col_info = st.columns([1, 3])
     with col_refresh:
         if st.button("🔄 刷新数据", use_container_width=True):
@@ -721,12 +746,13 @@ with tab6:
                 st.write(f"• {item}")
         else:
             st.write("• 暂无明显利空")
-    with st.expander("📰 最新财经新闻", expanded=False):
+    with st.expander("📰 东方财富7×24快讯", expanded=False):
         if news_sentiment and news_sentiment.get("headlines"):
+            st.caption(f"📌 来源：{news_sentiment.get('source', '东方财富')}")
             for h in news_sentiment["headlines"]:
                 st.write(f"• {h}")
         else:
-            st.write("暂无新闻")
+            st.write("暂无快讯")
     st.divider()
     st.subheader("💡 综合投资建议")
     st.info(advice)
@@ -741,7 +767,7 @@ with tab6:
 # ==================== 底部 ====================
 st.divider()
 st.caption("⚠️ 本系统为学习演示工具，不构成投资建议")
-st.caption("📊 数据来源：akshare + 新浪财经 + 模拟数据")
+st.caption("📊 数据来源：东方财富(中国财经网) + akshare + 新浪财经 + 模拟数据")
 if GITHUB_TOKEN:
     st.caption("💾 持仓数据已永久保存到GitHub，重新部署不丢失")
 else:
