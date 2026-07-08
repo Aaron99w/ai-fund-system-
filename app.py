@@ -157,7 +157,9 @@ def get_realtime_price(code, asset_type="场内ETF"):
     random.seed(hash(code) % 100)
     return round(random.uniform(1.0, 20.0), 2), "模拟"
 
+# ==================== 获取历史数据（含模拟保底） ====================
 def get_historical_data(code, days=60, asset_type="场内ETF"):
+    """获取历史数据，失败时自动生成模拟数据"""
     try:
         import akshare as ak
         end = datetime.now().strftime("%Y%m%d")
@@ -167,10 +169,34 @@ def get_historical_data(code, days=60, asset_type="场内ETF"):
             df['日期'] = pd.to_datetime(df['日期'])
             df = df.sort_values('日期')
             df = df.rename(columns={'开盘': 'open', '收盘': 'close', '最高': 'high', '最低': 'low', '成交量': 'volume'})
-            return df
+            return df, "akshare"
     except:
         pass
-    return None
+    # 生成模拟数据（保底）
+    dates = pd.date_range(end=datetime.now(), periods=days, freq='D')
+    random.seed(hash(code) % 100)
+    base = random.uniform(1, 20)
+    prices = [base]
+    for i in range(days-1):
+        change = np.random.normal(0, 0.02)
+        prices.append(prices[-1] * (1 + change))
+    close = np.array(prices)
+    open_price = np.roll(close, 1)
+    open_price[0] = close[0] * (1 - random.uniform(0.01, 0.03))
+    high = close * (1 + np.random.uniform(0.005, 0.02, len(close)))
+    low = close * (1 - np.random.uniform(0.005, 0.02, len(close)))
+    volume = np.random.randint(1e6, 5e7, len(close))
+    df = pd.DataFrame({
+        '日期': dates,
+        'open': open_price,
+        'high': high,
+        'low': low,
+        'close': close,
+        'volume': volume
+    })
+    df['日期'] = pd.to_datetime(df['日期'])
+    df = df.sort_values('日期')
+    return df, "模拟数据"
 
 # ==================== 五大类别资产池 ====================
 ASSET_POOLS = {
@@ -863,9 +889,16 @@ with tab7:
         st.caption(f"📌 {selected_asset['category']} | {selected_asset['style']}")
         days = st.selectbox("K线周期", [30, 60, 90, 120], index=2)
     
-    df = get_historical_data(selected_code, days, "场内ETF")
+    df, data_source = get_historical_data(selected_code, days, "场内ETF")
+    
+    # 显示数据来源提示
+    if data_source == "模拟数据":
+        st.info(f"💡 当前使用模拟数据（无法获取实时行情），仅供功能演示")
+    else:
+        st.success(f"✅ 数据来源：{data_source}")
+    
     if df is None or df.empty:
-        st.warning("⚠️ 无法获取历史数据，请稍后重试")
+        st.warning("⚠️ 数据加载失败，请稍后重试")
     else:
         ma5 = calc_ma(df, 5)
         ma10 = calc_ma(df, 10)
