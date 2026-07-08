@@ -18,11 +18,12 @@ st.set_page_config(
 )
 
 st.title("📊 AI智能投资系统")
-st.caption("📈 一键买入 · 实时盈亏 · 止盈止损 · 定投计算 · 基金对比 · 市场情绪")
+st.caption("📈 一键买入 · 实时盈亏 · 止盈止损 · 定投计算 · 基金对比 · 市场情绪 · 微信通知")
 
 # ==================== GitHub永久存储 ====================
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
 GITHUB_REPO = st.secrets.get("GITHUB_REPO", "Aaron99w/ai-fund-system")
+WEBHOOK_URL = st.secrets.get("WEBHOOK_URL", "")
 HOLDINGS_PATH = "holdings.json"
 
 def github_api_request(endpoint, method="GET", data=None):
@@ -100,12 +101,11 @@ def save_holdings(holdings):
 
 # ==================== 微信通知 ====================
 def send_wechat_message(content):
-    webhook = st.secrets.get("WEBHOOK_URL", "")
-    if not webhook:
+    if not WEBHOOK_URL:
         return False
     try:
         data = {"msgtype": "text", "text": {"content": content[:2000]}}
-        response = requests.post(webhook, json=data, timeout=5)
+        response = requests.post(WEBHOOK_URL, json=data, timeout=5)
         return response.status_code == 200
     except:
         return False
@@ -298,6 +298,20 @@ with st.sidebar:
         st.caption("💾 数据已永久保存到GitHub")
     else:
         st.caption("⚠️ 未配置GitHub存储")
+    
+    st.divider()
+    st.subheader("📱 微信通知")
+    if WEBHOOK_URL:
+        st.success("✅ 微信通知已配置")
+        if st.button("📤 测试通知", use_container_width=True):
+            if send_wechat_message("✅ 测试消息：AI投资助手微信通知正常！"):
+                st.success("✅ 发送成功")
+            else:
+                st.error("❌ 发送失败")
+    else:
+        st.warning("⚠️ 未配置微信通知")
+        st.caption("请在Secrets中配置 WEBHOOK_URL")
+    
     st.divider()
     st.caption("📊 数据状态：GitHub永久存储")
     st.caption("🔄 数据跨部署保留")
@@ -572,3 +586,7 @@ if GITHUB_TOKEN:
     st.caption("💾 持仓数据已永久保存到GitHub，重新部署不丢失")
 else:
     st.caption("⚠️ 未配置GitHub存储，持仓数据可能丢失")
+if WEBHOOK_URL:
+    st.caption("📱 微信通知已启用")
+else:
+    st.caption("📱 微信通知未配置")
