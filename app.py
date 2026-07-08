@@ -2,13 +2,24 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import json
 import os
 import requests
 import random
 import time
 import base64
+
+# ==================== 北京时间工具函数 ====================
+def get_beijing_time():
+    """获取当前北京时间"""
+    return datetime.utcnow() + timedelta(hours=8)
+
+def format_beijing_time(fmt="%Y-%m-%d %H:%M:%S"):
+    return get_beijing_time().strftime(fmt)
+
+def format_beijing_time_short():
+    return get_beijing_time().strftime("%H:%M:%S")
 
 # ==================== 页面设置 ====================
 st.set_page_config(
@@ -65,7 +76,7 @@ def save_holdings_to_github(holdings):
     try:
         content = json.dumps(holdings, ensure_ascii=False, indent=2)
         encoded = base64.b64encode(content.encode("utf-8")).decode("utf-8")
-        data = {"message": f"更新持仓 {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", "content": encoded, "sha": st.session_state.get("file_sha", "")}
+        data = {"message": f"更新持仓 {format_beijing_time()}", "content": encoded, "sha": st.session_state.get("file_sha", "")}
         response = github_api_request(f"contents/{HOLDINGS_PATH}", "PUT", data)
         if response and response.status_code in [200, 201]:
             if response.status_code == 201:
@@ -178,7 +189,7 @@ ASSET_POOLS = {
         ]
     },
     "股票": {
-        "icon": "📊",
+        "icon": "💹",
         "description": "精选A股优质龙头，适合深入研究",
         "list": [
             {"name": "贵州茅台", "code": "600519", "style": "消费", "risk": "中"},
@@ -414,6 +425,7 @@ with st.sidebar:
     st.divider()
     st.caption("📊 数据状态：GitHub永久存储")
     st.caption("🔄 数据跨部署保留")
+    st.caption(f"🕐 当前北京时间：{format_beijing_time()}")
 
 # ==================== 主界面 ====================
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
@@ -432,7 +444,6 @@ with tab1:
     
     col1, col2 = st.columns([2, 1])
     with col1:
-        # 五大类别选择
         asset_category = st.selectbox(
             "选择资产类别",
             options=list(ASSET_POOLS.keys()),
@@ -444,7 +455,6 @@ with tab1:
     
     st.info(f"📌 {ASSET_POOLS[asset_category]['description']}")
     
-    # 获取当前类别的资产列表
     assets = ASSET_POOLS[asset_category]["list"]
     
     for i, asset in enumerate(assets):
@@ -480,7 +490,7 @@ with tab1:
                             "code": asset["code"],
                             "name": asset["name"],
                             "amount": buy_amount,
-                            "buy_date": datetime.now().strftime("%Y-%m-%d"),
+                            "buy_date": get_beijing_time().strftime("%Y-%m-%d"),
                             "nav": nav,
                             "nav_source": source,
                             "asset_type": asset_category,
@@ -652,7 +662,7 @@ with tab6:
         if st.button("🔄 刷新数据", use_container_width=True):
             st.rerun()
     with col_info:
-        st.caption(f"⏱️ 最后更新：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        st.caption(f"⏱️ 最后更新（北京时间）：{format_beijing_time()}")
     market_data = get_market_data()
     hot_sectors = get_hot_sectors()
     news_sentiment = get_news_sentiment()
@@ -671,7 +681,7 @@ with tab6:
     col1, col2, col3 = st.columns(3)
     col1.metric("📊 综合情绪", final_sentiment)
     col2.metric("📈 平均涨跌幅", f"{'+' if avg_change > 0 else ''}{avg_change:.2f}%")
-    col3.metric("🕐 更新时间", datetime.now().strftime("%H:%M:%S"))
+    col3.metric("🕐 更新时间（北京）", format_beijing_time_short())
     st.caption(f"📌 {sentiment_desc}")
     st.subheader("📊 各大指数表现")
     index_cols = st.columns(5)
