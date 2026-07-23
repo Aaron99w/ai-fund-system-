@@ -3,13 +3,14 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 import json
 import os
 import requests
 import random
 import time
 import base64
+import re
 
 # ==================== 北京时间工具 ====================
 def get_beijing_time():
@@ -20,18 +21,19 @@ def format_beijing_time(fmt="%Y-%m-%d %H:%M:%S"):
 
 # ==================== 页面设置 ====================
 st.set_page_config(
-    page_title="AI智能投资系统",
-    page_icon="📈",
+    page_title="AI智能投资系统 Pro",
+    page_icon="🧠",
     layout="wide"
 )
 
-st.title("📊 AI智能投资系统")
-st.caption("📈 基于真实市场数据 · 智能板块轮动 · 持仓永久保存")
+st.title("🧠 AI智能投资系统 Pro")
+st.caption("📈 对话交互 · 智能诊断 · 自动盯盘 · 千人千面 · 全流程闭环")
 
 # ==================== GitHub永久存储 ====================
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", "")
 GITHUB_REPO = st.secrets.get("GITHUB_REPO", "Aaron99w/ai-fund-system")
 HOLDINGS_PATH = "holdings.json"
+USER_PROFILE_PATH = "user_profile.json"
 
 def github_api_request(endpoint, method="GET", data=None):
     if not GITHUB_TOKEN:
@@ -49,227 +51,55 @@ def github_api_request(endpoint, method="GET", data=None):
     except:
         return None
 
-def load_holdings():
+def load_data(filename, default):
     if not GITHUB_TOKEN:
-        return load_holdings_local()
+        return default
     try:
-        response = github_api_request(f"contents/{HOLDINGS_PATH}")
+        response = github_api_request(f"contents/{filename}")
         if response and response.status_code == 200:
             content = response.json()
             file_content = base64.b64decode(content["content"]).decode("utf-8")
             data = json.loads(file_content)
-            st.session_state["file_sha"] = content.get("sha", "")
+            st.session_state[f"{filename}_sha"] = content.get("sha", "")
             return data
         elif response and response.status_code == 404:
-            save_holdings([])
-            return []
+            save_data(filename, default)
+            return default
         else:
-            return load_holdings_local()
+            return default
     except:
-        return load_holdings_local()
+        return default
 
-def save_holdings(holdings):
+def save_data(filename, data):
     if not GITHUB_TOKEN:
-        return save_holdings_local(holdings)
+        return False
     try:
-        content = json.dumps(holdings, ensure_ascii=False, indent=2)
+        content = json.dumps(data, ensure_ascii=False, indent=2)
         encoded = base64.b64encode(content.encode("utf-8")).decode("utf-8")
-        data = {"message": f"更新持仓 {format_beijing_time()}", "content": encoded, "sha": st.session_state.get("file_sha", "")}
-        response = github_api_request(f"contents/{HOLDINGS_PATH}", "PUT", data)
+        payload = {"message": f"更新 {filename} {format_beijing_time()}", "content": encoded}
+        sha = st.session_state.get(f"{filename}_sha")
+        if sha:
+            payload["sha"] = sha
+        response = github_api_request(f"contents/{filename}", "PUT", payload)
         if response and response.status_code in [200, 201]:
             if response.status_code == 201:
-                st.session_state["file_sha"] = response.json().get("content", {}).get("sha", "")
+                st.session_state[f"{filename}_sha"] = response.json().get("content", {}).get("sha", "")
             return True
-        else:
-            return save_holdings_local(holdings)
-    except:
-        return save_holdings_local(holdings)
-
-def load_holdings_local():
-    if os.path.exists("holdings.json"):
-        try:
-            with open("holdings.json", "r", encoding="utf-8") as f:
-                return json.load(f)
-        except:
-            return []
-    return []
-
-def save_holdings_local(holdings):
-    try:
-        with open("holdings.json", "w", encoding="utf-8") as f:
-            json.dump(holdings, f, ensure_ascii=False, indent=2)
-        return True
+        return False
     except:
         return False
 
-# ==================== 真实市场数据获取 ====================
-def get_sector_performance():
-    """获取各板块近期表现"""
-    try:
-        import akshare as ak
-        # 获取主要ETF近期表现
-        etfs = [
-            {"name": "科技", "code": "515000"},   # 科技ETF
-            {"name": "半导体", "code": "512480"}, # 半导体ETF
-            {"name": "芯片", "code": "159995"},   # 芯片ETF
-            {"name": "人工智能", "code": "159819"}, # AI ETF
-            {"name": "新能源车", "code": "515030"}, # 新能源车ETF
-            {"name": "光伏", "code": "515790"},   # 光伏ETF
-            {"name": "军工", "code": "512660"},   # 军工ETF
-            {"name": "消费", "code": "159928"},   # 消费ETF
-            {"name": "医药", "code": "512010"},   # 医药ETF
-            {"name": "红利", "code": "510880"},   # 红利ETF
-            {"name": "证券", "code": "512880"},   # 证券ETF
-            {"name": "银行", "code": "512800"},   # 银行ETF
-            {"name": "沪深300", "code": "510300"}, # 沪深300
-            {"name": "科创50", "code": "588000"}, # 科创50
-            {"name": "创业板", "code": "159915"}, # 创业板
-        ]
-        
-        results = []
-        end = datetime.now().strftime("%Y%m%d")
-        start_1m = (datetime.now() - timedelta(days=30)).strftime("%Y%m%d")
-        start_3m = (datetime.now() - timedelta(days=90)).strftime("%Y%m%d")
-        
-        for etf in etfs:
-            try:
-                df = ak.stock_zh_a_hist(symbol=etf["code"], period="daily", 
-                                       start_date=start_1m, end_date=end, adjust="qfq")
-                if df is not None and not df.empty and len(df) >= 5:
-                    ret_1m = (df['收盘'].iloc[-1] / df['收盘'].iloc[0] - 1) * 100
-                    ret_3m = 0
-                    try:
-                        df3 = ak.stock_zh_a_hist(symbol=etf["code"], period="daily",
-                                                start_date=start_3m, end_date=end, adjust="qfq")
-                        if df3 is not None and not df3.empty:
-                            ret_3m = (df3['收盘'].iloc[-1] / df3['收盘'].iloc[0] - 1) * 100
-                    except:
-                        pass
-                    results.append({
-                        "板块": etf["name"],
-                        "近1月%": round(ret_1m, 2),
-                        "近3月%": round(ret_3m, 2),
-                        "趋势": "📈" if ret_1m > 0 else "📉" if ret_1m < -2 else "➡️"
-                    })
-            except:
-                pass
-        
-        # 按近1月表现排序
-        if results:
-            return sorted(results, key=lambda x: x["近1月%"], reverse=True)
-        return generate_simulated_sectors()
-    except:
-        return generate_simulated_sectors()
+def load_holdings():
+    return load_data(HOLDINGS_PATH, [])
 
-def generate_simulated_sectors():
-    """模拟板块数据（保底）"""
-    sectors = ["科技", "半导体", "芯片", "人工智能", "新能源车", "光伏", "军工", "消费", "医药", "红利", "证券", "银行", "沪深300", "科创50", "创业板"]
-    results = []
-    for s in sectors:
-        ret = round(random.uniform(-8, 6), 2)
-        results.append({
-            "板块": s,
-            "近1月%": ret,
-            "近3月%": round(ret + random.uniform(-3, 3), 2),
-            "趋势": "📈" if ret > 0 else "📉" if ret < -2 else "➡️"
-        })
-    return sorted(results, key=lambda x: x["近1月%"], reverse=True)
+def save_holdings(holdings):
+    return save_data(HOLDINGS_PATH, holdings)
 
-# ==================== 基于市场数据的AI推荐 ====================
-def get_ai_recommendation_real():
-    """基于真实市场数据推荐基金"""
-    sectors = get_sector_performance()
-    
-    # 找出表现最好的板块
-    top_sectors = [s for s in sectors if s["近1月%"] > 0]
-    if not top_sectors:
-        top_sectors = sectors[:3]  # 如果都跌，选跌幅最小的
-    
-    # 基金池（按板块分类）
-    fund_by_sector = {
-        "科技": [
-            {"name": "前海开源人工智能混合", "code": "001986", "style": "科技"},
-            {"name": "万家人工智能混合", "code": "006281", "style": "科技"},
-            {"name": "中欧时代先锋股票A", "code": "001938", "style": "科技"},
-        ],
-        "半导体": [
-            {"name": "诺安成长混合", "code": "320007", "style": "芯片"},
-            {"name": "银河创新成长混合", "code": "519674", "style": "芯片"},
-        ],
-        "消费": [
-            {"name": "易方达蓝筹精选混合", "code": "005827", "style": "消费"},
-            {"name": "易方达中小盘混合", "code": "110011", "style": "消费"},
-            {"name": "景顺长城新兴成长混合", "code": "260108", "style": "消费"},
-            {"name": "汇添富消费行业混合", "code": "000083", "style": "消费"},
-        ],
-        "医药": [
-            {"name": "中欧医疗健康混合A", "code": "003095", "style": "医药"},
-            {"name": "汇添富创新医药混合", "code": "006113", "style": "医药"},
-            {"name": "广发医疗保健股票A", "code": "004851", "style": "医药"},
-        ],
-        "均衡": [
-            {"name": "交银阿尔法核心混合", "code": "519712", "style": "均衡"},
-            {"name": "兴全合润混合", "code": "163406", "style": "均衡"},
-            {"name": "富国天惠成长混合", "code": "161005", "style": "均衡"},
-            {"name": "睿远成长价值混合A", "code": "007119", "style": "均衡"},
-        ],
-        "新能源": [
-            {"name": "农银新能源主题混合", "code": "002190", "style": "新能源"},
-            {"name": "华夏能源革新股票", "code": "003834", "style": "新能源"},
-        ],
-        "军工": [
-            {"name": "富国军工主题混合", "code": "005609", "style": "军工"},
-            {"name": "易方达国防军工混合", "code": "001475", "style": "军工"},
-        ],
-        "红利": [
-            {"name": "工银瑞信金融地产混合", "code": "000251", "style": "金融"},
-            {"name": "汇添富价值精选混合", "code": "519069", "style": "金融"},
-        ]
-    }
-    
-    # 根据当前市场环境选择推荐
-    recommendations = []
-    used_codes = set()
-    
-    # 从表现最好的板块中选取基金
-    for sector_data in top_sectors[:3]:
-        sector_name = sector_data["板块"]
-        if sector_name in fund_by_sector:
-            funds = fund_by_sector[sector_name]
-            for f in funds[:2]:
-                if f["code"] not in used_codes:
-                    used_codes.add(f["code"])
-                    # 根据板块表现计算评分
-                    perf = sector_data["近1月%"]
-                    score = min(95, max(60, 75 + perf * 1.5))
-                    recommendations.append({
-                        "name": f["name"],
-                        "code": f["code"],
-                        "style": f["style"],
-                        "score": round(score, 1),
-                        "sector": sector_name,
-                        "sector_return": perf,
-                        "reason": f"当前{sector_name}板块表现强势（近1月+{perf:.1f}%），该基金为板块内优质标的"
-                    })
-    
-    # 如果推荐不足，补充均衡型基金
-    if len(recommendations) < 3:
-        for f in fund_by_sector["均衡"]:
-            if f["code"] not in used_codes:
-                used_codes.add(f["code"])
-                recommendations.append({
-                    "name": f["name"],
-                    "code": f["code"],
-                    "style": f["style"],
-                    "score": 78,
-                    "sector": "均衡",
-                    "sector_return": 0,
-                    "reason": "均衡配置型基金，适合当前震荡市"
-                })
-                if len(recommendations) >= 5:
-                    break
-    
-    return recommendations, sectors
+def load_user_profile():
+    return load_data(USER_PROFILE_PATH, {"risk": "中", "goal": "稳健增值", "horizon": 3})
+
+def save_user_profile(profile):
+    return save_data(USER_PROFILE_PATH, profile)
 
 # ==================== 微信通知 ====================
 WEBHOOK_URL = st.secrets.get("WEBHOOK_URL", "")
@@ -284,26 +114,247 @@ def send_wechat_message(content):
     except:
         return False
 
-# ==================== 其他功能函数 ====================
-def get_real_nav(code, asset_type="场外基金"):
+# ==================== DeepSeek API（自然语言理解） ====================
+DEEPSEEK_API_KEY = st.secrets.get("DEEPSEEK_API_KEY", "")
+
+def call_deepseek(prompt, system="你是一个专业的投资顾问，回答简洁、实用。"):
+    if not DEEPSEEK_API_KEY:
+        return None
+    try:
+        url = "https://api.deepseek.com/v1/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        data = {
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.3,
+            "max_tokens": 500
+        }
+        response = requests.post(url, headers=headers, json=data, timeout=10)
+        if response.status_code == 200:
+            return response.json()["choices"][0]["message"]["content"]
+        else:
+            return None
+    except:
+        return None
+
+# ==================== 市场数据获取 ====================
+def get_sector_performance():
     try:
         import akshare as ak
-        if asset_type in ["场外基金", "普通基金"]:
-            df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
-            if df is not None and not df.empty:
-                return float(df['单位净值'].iloc[-1]), "akshare"
+        etfs = [
+            {"name": "科技", "code": "515000"},
+            {"name": "半导体", "code": "512480"},
+            {"name": "芯片", "code": "159995"},
+            {"name": "人工智能", "code": "159819"},
+            {"name": "新能源车", "code": "515030"},
+            {"name": "光伏", "code": "515790"},
+            {"name": "军工", "code": "512660"},
+            {"name": "消费", "code": "159928"},
+            {"name": "医药", "code": "512010"},
+            {"name": "红利", "code": "510880"},
+            {"name": "证券", "code": "512880"},
+            {"name": "银行", "code": "512800"},
+            {"name": "沪深300", "code": "510300"},
+            {"name": "科创50", "code": "588000"},
+            {"name": "创业板", "code": "159915"},
+        ]
+        results = []
+        end = datetime.now().strftime("%Y%m%d")
+        start_1m = (datetime.now() - timedelta(days=30)).strftime("%Y%m%d")
+        for etf in etfs:
+            try:
+                df = ak.stock_zh_a_hist(symbol=etf["code"], period="daily", 
+                                       start_date=start_1m, end_date=end, adjust="qfq")
+                if df is not None and not df.empty and len(df) >= 5:
+                    ret_1m = (df['收盘'].iloc[-1] / df['收盘'].iloc[0] - 1) * 100
+                    results.append({
+                        "板块": etf["name"],
+                        "近1月%": round(ret_1m, 2),
+                        "趋势": "📈" if ret_1m > 0 else "📉" if ret_1m < -2 else "➡️"
+                    })
+            except:
+                pass
+        if results:
+            return sorted(results, key=lambda x: x["近1月%"], reverse=True)
+        return generate_simulated_sectors()
+    except:
+        return generate_simulated_sectors()
+
+def generate_simulated_sectors():
+    sectors = ["科技", "半导体", "芯片", "人工智能", "新能源车", "光伏", "军工", "消费", "医药", "红利", "证券", "银行", "沪深300", "科创50", "创业板"]
+    results = []
+    for s in sectors:
+        ret = round(random.uniform(-8, 6), 2)
+        results.append({"板块": s, "近1月%": ret, "趋势": "📈" if ret > 0 else "📉" if ret < -2 else "➡️"})
+    return sorted(results, key=lambda x: x["近1月%"], reverse=True)
+
+def get_fund_nav(code):
+    try:
+        import akshare as ak
+        df = ak.fund_open_fund_info_em(symbol=code, indicator="单位净值走势")
+        if df is not None and not df.empty:
+            return float(df['单位净值'].iloc[-1]), "akshare"
     except:
         pass
-    return round(random.uniform(0.8, 3.0), 4), "模拟数据"
+    return round(random.uniform(0.8, 3.0), 4), "模拟"
 
-def get_real_nav_with_retry(code, asset_type="场外基金", max_retries=3):
-    for i in range(max_retries):
-        result = get_real_nav(code, asset_type)
-        if result and result[0] and result[0] > 0:
-            return result
-        time.sleep(0.2)
-    return round(random.uniform(0.8, 3.0), 4), "模拟数据"
+# ==================== AI Agent 函数 ====================
+def agent_macro_analysis():
+    """宏观分析Agent"""
+    sectors = get_sector_performance()
+    best = sectors[0] if sectors else {"板块": "未知", "近1月%": 0}
+    worst = sectors[-1] if sectors else {"板块": "未知", "近1月%": 0}
+    
+    prompt = f"""
+    当前市场环境分析：
+    - 近1月最强板块：{best['板块']}（涨幅{best['近1月%']:.2f}%）
+    - 近1月最弱板块：{worst['板块']}（涨幅{worst['近1月%']:.2f}%）
+    请给出简要的宏观市场判断和投资建议（50字以内）。
+    """
+    result = call_deepseek(prompt) if DEEPSEEK_API_KEY else None
+    if result:
+        return result
+    else:
+        if best['近1月%'] > 0:
+            return f"市场整体偏强，{best['板块']}板块领涨，建议关注强势板块机会。"
+        else:
+            return "市场整体偏弱，建议控制仓位，关注防御性板块。"
 
+def agent_portfolio_diagnosis(holdings):
+    """智能诊断Agent"""
+    if not holdings:
+        return "暂无持仓，无法诊断。建议先通过AI推荐买入。"
+    
+    # 计算盈亏
+    total_cost = sum(h["amount"] for h in holdings)
+    total_value = 0
+    sector_dist = {}
+    for h in holdings:
+        nav, _ = get_fund_nav(h["code"])
+        value = (h["amount"] / h["nav"]) * nav
+        total_value += value
+        sector = h.get("sector", "未知")
+        sector_dist[sector] = sector_dist.get(sector, 0) + h["amount"]
+    
+    profit = total_value - total_cost
+    profit_rate = (profit / total_cost) * 100 if total_cost > 0 else 0
+    
+    # 找出持仓占比最高的板块
+    max_sector = max(sector_dist, key=sector_dist.get) if sector_dist else "未知"
+    max_pct = (sector_dist.get(max_sector, 0) / total_cost * 100) if total_cost > 0 else 0
+    
+    prompt = f"""
+    持仓诊断：
+    - 总投入：{total_cost:.0f}元
+    - 当前市值：{total_value:.0f}元
+    - 总盈亏：{profit:.0f}元（{profit_rate:.1f}%）
+    - 持仓板块分布：{sector_dist}
+    - 最大集中板块：{max_sector}（占比{max_pct:.0f}%）
+    请给出调仓建议（3条以内，每条30字内）。
+    """
+    result = call_deepseek(prompt) if DEEPSEEK_API_KEY else None
+    if result:
+        return result
+    else:
+        advice = []
+        if profit_rate > 10:
+            advice.append("🏆 持仓盈利超过10%，建议止盈部分仓位。")
+        elif profit_rate < -5:
+            advice.append("⚠️ 持仓亏损超过5%，建议止损或等待反弹。")
+        if max_pct > 60:
+            advice.append(f"📊 {max_sector}板块占比过高，建议分散至其他板块降低风险。")
+        if not advice:
+            advice.append("📊 持仓配置合理，建议继续持有并关注市场变化。")
+        return "\n".join(advice)
+
+def agent_risk_monitor(holdings):
+    """风险监控Agent（返回预警信息）"""
+    if not holdings:
+        return []
+    alerts = []
+    for h in holdings:
+        nav, _ = get_fund_nav(h["code"])
+        profit_rate = (nav - h["nav"]) / h["nav"] * 100
+        if profit_rate >= 15:
+            alerts.append(f"🔔 {h['name']} 触发止盈（+{profit_rate:.1f}%），建议卖出。")
+        elif profit_rate <= -8:
+            alerts.append(f"🔔 {h['name']} 触发止损（{profit_rate:.1f}%），建议离场。")
+    return alerts
+
+# ==================== 个性化推荐（千人千面） ====================
+def personalized_recommendation(user_profile, holdings):
+    risk = user_profile.get("risk", "中")
+    goal = user_profile.get("goal", "稳健增值")
+    horizon = user_profile.get("horizon", 3)
+    
+    sectors = get_sector_performance()
+    # 根据风险偏好过滤板块
+    if risk == "低":
+        preferred_sectors = ["红利", "银行", "消费"]
+    elif risk == "高":
+        preferred_sectors = ["科技", "半导体", "芯片", "人工智能", "新能源车"]
+    else:  # 中
+        preferred_sectors = ["均衡", "医药", "沪深300", "消费"]
+    
+    # 从强势板块中筛选
+    strong_sectors = [s for s in sectors if s["近1月%"] > 0]
+    candidates = [s for s in strong_sectors if s["板块"] in preferred_sectors]
+    if not candidates:
+        candidates = sectors[:3]
+    
+    # 基金池
+    fund_map = {
+        "科技": [{"name": "前海开源人工智能混合", "code": "001986"}],
+        "半导体": [{"name": "诺安成长混合", "code": "320007"}],
+        "芯片": [{"name": "银河创新成长混合", "code": "519674"}],
+        "人工智能": [{"name": "万家人工智能混合", "code": "006281"}],
+        "消费": [{"name": "易方达蓝筹精选混合", "code": "005827"}],
+        "医药": [{"name": "中欧医疗健康混合A", "code": "003095"}],
+        "均衡": [{"name": "交银阿尔法核心混合", "code": "519712"}],
+        "红利": [{"name": "工银瑞信金融地产混合", "code": "000251"}],
+        "银行": [{"name": "汇添富价值精选混合", "code": "519069"}],
+        "沪深300": [{"name": "富国天惠成长混合", "code": "161005"}]
+    }
+    
+    recommendations = []
+    used_codes = set()
+    for s in candidates[:2]:
+        sector = s["板块"]
+        if sector in fund_map:
+            for f in fund_map[sector]:
+                if f["code"] not in used_codes:
+                    used_codes.add(f["code"])
+                    score = min(95, max(60, 75 + s["近1月%"] * 1.2))
+                    recommendations.append({
+                        "name": f["name"],
+                        "code": f["code"],
+                        "sector": sector,
+                        "score": round(score, 1),
+                        "reason": f"根据您的{risk}风险偏好，推荐{sector}板块的优质基金（近1月+{s['近1月%']:.1f}%）"
+                    })
+    if len(recommendations) < 3:
+        # 补充均衡型
+        for f in fund_map.get("均衡", []):
+            if f["code"] not in used_codes:
+                used_codes.add(f["code"])
+                recommendations.append({
+                    "name": f["name"],
+                    "code": f["code"],
+                    "sector": "均衡",
+                    "score": 78,
+                    "reason": "均衡配置型基金，适合您的长期稳健目标"
+                })
+                if len(recommendations) >= 5:
+                    break
+    return recommendations
+
+# ==================== 其他辅助函数 ====================
 def check_stop(profit):
     if profit >= 15:
         return "🔴 建议止盈", "止盈"
@@ -327,12 +378,26 @@ def calculate_drip(monthly, annual_return, years):
 # ==================== 初始化 ====================
 if "total_cash" not in st.session_state:
     st.session_state.total_cash = 10000
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+if "holdings" not in st.session_state:
+    st.session_state.holdings = load_holdings()
+
+user_profile = load_user_profile()
 
 # ==================== 侧边栏 ====================
 with st.sidebar:
-    st.header("💰 我的资产")
+    st.header("⚙️ 个人设置")
     total_cash = st.number_input("总资金（元）", min_value=1000, value=st.session_state.total_cash, step=1000)
     st.session_state.total_cash = total_cash
+    
+    risk = st.selectbox("风险偏好", ["低", "中", "高"], index=["低","中","高"].index(user_profile.get("risk","中")))
+    goal = st.selectbox("投资目标", ["保本", "稳健增值", "追求高收益"], index=["保本","稳健增值","追求高收益"].index(user_profile.get("goal","稳健增值")))
+    horizon = st.number_input("投资年限（年）", min_value=1, max_value=30, value=user_profile.get("horizon", 3))
+    if st.button("💾 保存个人设置"):
+        save_user_profile({"risk": risk, "goal": goal, "horizon": horizon})
+        st.success("✅ 设置已保存")
+    
     st.divider()
     holdings = load_holdings()
     st.metric("持仓数量", f"{len(holdings)} 只")
@@ -343,119 +408,163 @@ with st.sidebar:
     st.divider()
     st.subheader("📱 微信通知")
     if WEBHOOK_URL:
-        st.success("✅ 微信通知已配置")
-        if st.button("📤 测试通知", use_container_width=True):
-            if send_wechat_message("✅ 测试消息：AI投资助手微信通知正常！"):
-                st.success("✅ 发送成功")
-            else:
-                st.error("❌ 发送失败")
+        st.success("✅ 已配置")
     else:
-        st.warning("⚠️ 未配置微信通知")
+        st.warning("⚠️ 未配置")
+    if st.button("📤 测试通知", use_container_width=True):
+        if send_wechat_message("✅ AI投资系统 Pro 测试通知！"):
+            st.success("✅ 发送成功")
+        else:
+            st.error("❌ 发送失败")
 
 # ==================== 主界面 ====================
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "🤖 AI推荐",
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+    "💬 AI对话",
+    "🎯 智能推荐",
     "📊 板块轮动",
     "📈 持仓监控",
+    "🧠 智能诊断",
     "📋 持仓管理",
     "💰 定投计算器"
 ])
 
-# ==================== Tab1: AI推荐（基于真实市场） ====================
+# ==================== Tab1: AI对话 ====================
 with tab1:
-    st.subheader("🤖 AI智能推荐（基于真实市场数据）")
-    st.caption("📌 系统自动识别当前强势板块，从强势板块中推荐基金")
+    st.subheader("💬 AI投资助手")
+    st.caption("输入您的问题，AI将为您解答（支持自然语言）")
     
-    if st.button("📊 分析市场并推荐", use_container_width=True, type="primary"):
-        with st.spinner("AI正在分析市场数据..."):
-            recommendations, sectors = get_ai_recommendation_real()
+    # 显示历史
+    for msg in st.session_state.chat_history[-10:]:
+        if msg["role"] == "user":
+            st.markdown(f"**你：** {msg['content']}")
+        else:
+            st.markdown(f"**AI：** {msg['content']}")
+    
+    user_input = st.text_input("请输入您的问题：", placeholder="例如：最近什么板块值得买？")
+    if st.button("发送", use_container_width=True):
+        if user_input:
+            st.session_state.chat_history.append({"role": "user", "content": user_input})
             
-            # 显示板块表现
-            st.subheader("📊 当前板块表现（近1月）")
-            df_sectors = pd.DataFrame(sectors)
-            st.dataframe(df_sectors, use_container_width=True)
+            # 简单意图识别
+            if "板块" in user_input or "什么" in user_input or "推荐" in user_input:
+                sectors = get_sector_performance()
+                best = sectors[0] if sectors else None
+                if best:
+                    answer = f"📊 当前近1月最强板块是 **{best['板块']}**（涨幅{best['近1月%']:.2f}%）。建议关注该板块的基金。"
+                else:
+                    answer = "暂无法获取市场数据，请稍后再试。"
+            elif "持仓" in user_input or "诊断" in user_input:
+                holdings = load_holdings()
+                answer = agent_portfolio_diagnosis(holdings)
+            elif "风险" in user_input or "预警" in user_input:
+                holdings = load_holdings()
+                alerts = agent_risk_monitor(holdings)
+                if alerts:
+                    answer = "🚨 风险预警：\n" + "\n".join(alerts)
+                else:
+                    answer = "✅ 当前持仓无高风险信号。"
+            else:
+                # 调用DeepSeek
+                if DEEPSEEK_API_KEY:
+                    reply = call_deepseek(user_input)
+                    answer = reply if reply else "抱歉，AI暂时无法回答，请稍后再试。"
+                else:
+                    answer = "💡 请配置 DeepSeek API Key 以获得更智能的回答。当前可回答简单问题。"
             
-            # 显示推荐
-            st.subheader("🎯 AI推荐基金")
-            for i, rec in enumerate(recommendations):
-                with st.container():
-                    col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
-                    with col1:
-                        st.write(f"**{i+1}. {rec['name']}**")
-                        st.caption(f"{rec['code']} | {rec['style']}")
-                        st.caption(f"📌 所属板块：{rec['sector']}（近1月+{rec['sector_return']:.1f}%）")
-                    with col2:
-                        st.metric("AI评分", f"{rec['score']}/100")
-                    with col3:
-                        buy_amount = st.number_input(
-                            "金额(元)", 
-                            min_value=100, 
-                            max_value=10000, 
-                            value=1000, 
-                            step=100, 
-                            key=f"amount_{rec['code']}"
-                        )
-                    with col4:
-                        holdings = load_holdings()
-                        already = any(h["code"] == rec["code"] for h in holdings)
-                        if already:
-                            st.button("✅ 已持有", disabled=True, key=f"held_{rec['code']}")
-                        else:
-                            if st.button("📥 买入", key=f"buy_{rec['code']}_{i}"):
-                                nav, source = get_real_nav_with_retry(rec["code"])
-                                holdings = load_holdings()
-                                holdings.append({
-                                    "code": rec["code"],
-                                    "name": rec["name"],
-                                    "amount": buy_amount,
-                                    "buy_date": datetime.now().strftime("%Y-%m-%d"),
-                                    "nav": nav,
-                                    "style": rec["style"],
-                                    "sector": rec["sector"]
-                                })
-                                save_holdings(holdings)
+            st.session_state.chat_history.append({"role": "assistant", "content": answer})
+            st.rerun()
+
+# ==================== Tab2: 智能推荐（千人千面） ====================
+with tab2:
+    st.subheader("🎯 智能推荐（基于您的个人设置）")
+    st.caption(f"当前风险偏好：{risk} | 目标：{goal} | 年限：{horizon}年")
+    
+    if st.button("📊 获取个性化推荐", use_container_width=True, type="primary"):
+        with st.spinner("正在分析您的偏好和市场..."):
+            holdings = load_holdings()
+            recommendations = personalized_recommendation(
+                {"risk": risk, "goal": goal, "horizon": horizon},
+                holdings
+            )
+            st.session_state.recommendations = recommendations
+            st.success("✅ 推荐完成")
+    
+    if "recommendations" in st.session_state and st.session_state.recommendations:
+        for i, rec in enumerate(st.session_state.recommendations):
+            with st.container():
+                col1, col2, col3, col4 = st.columns([2, 1, 1, 1])
+                with col1:
+                    st.write(f"**{i+1}. {rec['name']}**")
+                    st.caption(f"{rec['code']} | 板块：{rec['sector']}")
+                with col2:
+                    st.metric("AI评分", f"{rec['score']}/100")
+                with col3:
+                    buy_amount = st.number_input(
+                        "金额(元)", 
+                        min_value=100, 
+                        max_value=10000, 
+                        value=1000, 
+                        step=100, 
+                        key=f"amount_p_{rec['code']}"
+                    )
+                with col4:
+                    holdings = load_holdings()
+                    already = any(h["code"] == rec["code"] for h in holdings)
+                    if already:
+                        st.button("✅ 已持有", disabled=True, key=f"held_p_{rec['code']}")
+                    else:
+                        if st.button("📥 买入", key=f"buy_p_{rec['code']}_{i}"):
+                            nav, _ = get_fund_nav(rec["code"])
+                            holdings.append({
+                                "code": rec["code"],
+                                "name": rec["name"],
+                                "amount": buy_amount,
+                                "buy_date": datetime.now().strftime("%Y-%m-%d"),
+                                "nav": nav,
+                                "sector": rec["sector"]
+                            })
+                            if save_holdings(holdings):
                                 st.success(f"✅ 买入 {rec['name']} {buy_amount}元，净值 {nav:.4f}")
                                 send_wechat_message(f"✅ 买入 {rec['name']}，金额{buy_amount}元")
                                 st.rerun()
-                    
-                    st.info(f"💡 {rec['reason']}")
-                    st.divider()
-    
-    if not st.session_state.get("recommendations_loaded", False):
-        st.info("💡 点击「分析市场并推荐」获取基于真实市场数据的基金推荐")
+                            else:
+                                st.error("❌ 保存失败")
+                st.info(f"💡 {rec['reason']}")
+                st.divider()
 
-# ==================== Tab2: 板块轮动 ====================
-with tab2:
+# ==================== Tab3: 板块轮动 ====================
+with tab3:
     st.subheader("📊 板块轮动分析")
-    st.caption("基于真实市场数据，识别当前强势板块")
-    
     if st.button("🔄 刷新板块数据", use_container_width=True):
         sectors = get_sector_performance()
         df_sectors = pd.DataFrame(sectors)
         st.dataframe(df_sectors, use_container_width=True)
-        
-        # 绘制柱状图
         fig = go.Figure()
         colors = ['green' if x > 0 else 'red' if x < -2 else 'orange' for x in df_sectors["近1月%"]]
         fig.add_trace(go.Bar(x=df_sectors["板块"], y=df_sectors["近1月%"], marker_color=colors))
         fig.update_layout(height=400, title="各板块近1月涨跌幅")
         st.plotly_chart(fig, use_container_width=True)
-        
         best = df_sectors.iloc[0]
         worst = df_sectors.iloc[-1]
         col1, col2 = st.columns(2)
         col1.success(f"📈 最强板块：{best['板块']}（+{best['近1月%']:.2f}%）")
         col2.error(f"📉 最弱板块：{worst['板块']}（{worst['近1月%']:.2f}%）")
 
-# ==================== Tab3: 持仓监控 ====================
-with tab3:
+# ==================== Tab4: 持仓监控 ====================
+with tab4:
     st.subheader("📊 持仓监控")
     holdings = load_holdings()
     if holdings:
+        # 扫描预警
+        alerts = agent_risk_monitor(holdings)
+        if alerts:
+            for a in alerts:
+                st.warning(a)
+        
         nav_cache = {}
         for h in holdings:
-            nav, source = get_real_nav_with_retry(h["code"])
-            nav_cache[h["code"]] = {"nav": nav, "source": source}
+            nav, _ = get_fund_nav(h["code"])
+            nav_cache[h["code"]] = nav
         
         total_profit, total_cost = 0, 0
         for h in holdings:
@@ -463,8 +572,7 @@ with tab3:
             buy_price = h.get("nav", 0)
             amount = h.get("amount", 0)
             shares = amount / buy_price if buy_price > 0 else 0
-            nav_info = nav_cache.get(code, {"nav": buy_price, "source": "未知"})
-            current_nav = nav_info["nav"]
+            current_nav = nav_cache.get(code, buy_price)
             profit = (current_nav - buy_price) * shares if buy_price > 0 else 0
             profit_rate = (current_nav - buy_price) / buy_price * 100 if buy_price > 0 else 0
             total_profit += profit
@@ -490,18 +598,39 @@ with tab3:
         col1.metric("总投入", f"{total_cost:.2f}元")
         col2.metric("总盈亏", f"{'+' if total_profit > 0 else ''}{total_profit:.2f}元")
         col3.metric("总收益率", f"{'+' if total_cost > 0 else ''}{(total_profit/total_cost*100):.2f}%" if total_cost > 0 else "0.00%")
-        
-        if total_profit > 0:
-            st.success(f"🎉 当前总盈利 {total_profit:.2f} 元")
-        elif total_profit < 0:
-            st.warning(f"⚠️ 当前总亏损 {abs(total_profit):.2f} 元")
-        else:
-            st.info("📊 当前盈亏平衡")
     else:
         st.info("📭 暂无持仓")
 
-# ==================== Tab4: 持仓管理 ====================
-with tab4:
+# ==================== Tab5: 智能诊断 ====================
+with tab5:
+    st.subheader("🧠 智能账户诊断")
+    st.caption("AI分析您的持仓，给出具体调仓建议")
+    
+    if st.button("📊 运行诊断", use_container_width=True, type="primary"):
+        holdings = load_holdings()
+        if holdings:
+            with st.spinner("AI正在分析..."):
+                advice = agent_portfolio_diagnosis(holdings)
+                st.subheader("📋 诊断结果")
+                st.markdown(advice)
+                
+                # 板块分布
+                sector_dist = {}
+                for h in holdings:
+                    sector = h.get("sector", "未知")
+                    sector_dist[sector] = sector_dist.get(sector, 0) + h["amount"]
+                if sector_dist:
+                    st.subheader("📊 持仓板块分布")
+                    df_dist = pd.DataFrame({"板块": list(sector_dist.keys()), "金额": list(sector_dist.values())})
+                    fig = go.Figure()
+                    fig.add_trace(go.Pie(labels=df_dist["板块"], values=df_dist["金额"]))
+                    fig.update_layout(height=300)
+                    st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("⚠️ 暂无持仓，请先买入基金")
+
+# ==================== Tab6: 持仓管理 ====================
+with tab6:
     st.subheader("📋 持仓管理")
     holdings = load_holdings()
     if holdings:
@@ -524,8 +653,8 @@ with tab4:
     else:
         st.info("📭 暂无持仓")
 
-# ==================== Tab5: 定投计算器 ====================
-with tab5:
+# ==================== Tab7: 定投计算器 ====================
+with tab7:
     st.subheader("💰 定投计算器")
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -547,6 +676,10 @@ st.divider()
 st.caption("⚠️ 本系统为学习演示工具，不构成投资建议")
 st.caption("📊 数据来源：东方财富(中国财经网) + akshare + 模拟数据")
 if GITHUB_TOKEN:
-    st.caption("💾 持仓数据已永久保存到GitHub，重新部署不丢失")
+    st.caption("💾 所有数据已永久保存到GitHub，重新部署不丢失")
 else:
-    st.caption("⚠️ 未配置GitHub存储，持仓数据可能丢失")
+    st.caption("⚠️ 未配置GitHub存储，数据可能丢失")
+if DEEPSEEK_API_KEY:
+    st.caption("🧠 AI引擎：DeepSeek 已启用")
+else:
+    st.caption("🧠 AI引擎：未配置（请设置 DEEPSEEK_API_KEY）")
